@@ -1,0 +1,312 @@
+# Build Multi-Platform ACL2 Docker Image
+#
+# This workflow builds:
+# - linux/amd64 on GitHub-hosted runner (with SLSA attestation)
+# - linux/arm64 on self-hosted Apple Silicon Mac runner
+#
+# The self-hosted runner must have Docker Desktop installed.
+# Set up instructions: https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners
+#
+# Note: Only the amd64 image gets SLSA Level 2+ attestation.
+# The arm64 image is built on self-hosted runner (SLSA Level 1 only).
+
+name: Build ACL2 Docker (Multi-Platform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      acl2_ref:
+        description: 'ACL2 ref/commit to build (usually left blank, meaning latest master)'
+        required: false
+        default: ''
+      additional_tag:
+        description: 'Extra tag (usually left blank)'
+        required: false
+        default: ''
+      push_to_registry:
+        description: 'Push to registry?'
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: kestrelinstitute/acl2
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write       # For Sigstore signing
+  attestations: write   # To store attestation
+
+jobs:
+  # ==========================================================================
+  # Job 1: Resolve ACL2 commit hash
+  # ==========================================================================
+  resolve-commit:
+    runs-on: ubuntu-latest
+    outputs:
+      acl2_commit: ${{ steps.resolve.outputs.commit }}
+      acl2_commit_short: ${{ steps.resolve.outputs.commit_short }}
+      build_type: ${{ steps.resolve.outputs.build_type }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+    steps:
+      - name: Resolve ACL2 commit hash
+        id: resolve
+        run: |
+          REF="${{ inputs.acl2_ref }}"
+          if [ -z "$REF" ] || [ "$REF" = "master" ]; then
+            REF="master"
+            BUILD_TYPE="master"
+          else
+            BUILD_TYPE="commit"
+          fi
+          echo "Resolving ref: ${REF} (build_type: ${BUILD_TYPE})"
+
+          RESPONSE=$(curl -sL "https://api.github.com/repos/acl2/acl2/commits/${REF}")
+          COMMIT=$(echo "$RESPONSE" | jq -r '.sha')
+
+          if [ "$COMMIT" = "null" ] || [ -z "$COMMIT" ]; then
+            echo "Failed to resolve ref: ${REF}"
+            echo "API response: $RESPONSE"
+            exit 1
+          fi
+
+          COMMIT_SHORT="${COMMIT:0:7}"
+          IMAGE_TAG="${BUILD_TYPE}-${COMMIT_SHORT}"
+
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "commit_short=${COMMIT_SHORT}" >> $GITHUB_OUTPUT
+          echo "build_type=${BUILD_TYPE}" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "Resolved ${REF} to ${COMMIT} (tag: ${IMAGE_TAG})"
+
+  # ==========================================================================
+  # Job 2: Build amd64 image (GitHub-hosted runner)
+  # ==========================================================================
+  build-amd64:
+    needs: resolve-commit
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push amd64 image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            ACL2_COMMIT=${{ needs.resolve-commit.outputs.acl2_commit }}
+            ACL2_BUILD_TYPE=${{ needs.resolve-commit.outputs.build_type }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-commit.outputs.acl2_commit }}
+            org.opencontainers.image.source=https://github.com/acl2/acl2
+            org.opencontainers.image.description=ACL2 ${{ needs.resolve-commit.outputs.image_tag }} on SBCL
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ inputs.push_to_registry }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ==========================================================================
+  # Job 3: Build arm64 image (Self-hosted Apple Silicon runner)
+  # ==========================================================================
+  build-arm64:
+    needs: resolve-commit
+    # Self-hosted runner labels: self-hosted, macOS, ARM64
+    # You can also add custom labels when registering the runner
+    runs-on: [self-hosted, macOS, ARM64]
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push arm64 image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          build-args: |
+            ACL2_COMMIT=${{ needs.resolve-commit.outputs.acl2_commit }}
+            ACL2_BUILD_TYPE=${{ needs.resolve-commit.outputs.build_type }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-commit.outputs.acl2_commit }}
+            org.opencontainers.image.source=https://github.com/acl2/acl2
+            org.opencontainers.image.description=ACL2 ${{ needs.resolve-commit.outputs.image_tag }} on SBCL
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ inputs.push_to_registry }}
+          # Note: GitHub Actions cache (type=gha) may not work on self-hosted runners
+          # Use local cache instead
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      # Prevent cache from growing unbounded
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+
+  # ==========================================================================
+  # Job 4: Generate build provenance attestation (amd64 only)
+  # ==========================================================================
+  attest-amd64:
+    needs: [resolve-commit, build-amd64]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.push_to_registry }}
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate attestation for amd64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ needs.build-amd64.outputs.digest }}
+          push-to-registry: true
+
+  # ==========================================================================
+  # Job 5: Create multi-platform manifest
+  # ==========================================================================
+  create-manifest:
+    needs: [resolve-commit, build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.push_to_registry }}
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-platform manifest
+        id: manifest
+        run: |
+          # Construct tags (e.g., master-abc1234 or commit-abc1234)
+          TAGS="-t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.resolve-commit.outputs.image_tag }}"
+
+          # Add additional tag if specified
+          if [ -n "${{ inputs.additional_tag }}" ]; then
+            TAGS="$TAGS -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.additional_tag }}"
+          # Auto-add "latest" for default master builds (empty ref and empty additional_tag)
+          elif [ -z "${{ inputs.acl2_ref }}" ]; then
+            TAGS="$TAGS -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            echo "Auto-adding 'latest' tag for default master build"
+          fi
+
+          # Create manifest from the two platform-specific images
+          docker buildx imagetools create $TAGS \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-amd64.outputs.digest }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-arm64.outputs.digest }}
+
+          # Get the manifest digest
+          MANIFEST_DIGEST=$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.resolve-commit.outputs.image_tag }} --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=${MANIFEST_DIGEST}" >> $GITHUB_OUTPUT
+          echo "Created manifest with digest: ${MANIFEST_DIGEST}"
+
+  # ==========================================================================
+  # Job 6: Summary
+  # ==========================================================================
+  summary:
+    needs: [resolve-commit, build-amd64, build-arm64, attest-amd64, create-manifest]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print summary
+        run: |
+          echo "## Build Summary (Multi-Platform)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ACL2 Commit | \`${{ needs.resolve-commit.outputs.acl2_commit }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Type | \`${{ needs.resolve-commit.outputs.build_type }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag | \`${{ needs.resolve-commit.outputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.additional_tag }}" ]; then
+            echo "| Additional Tag | \`${{ inputs.additional_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          elif [ -z "${{ inputs.acl2_ref }}" ]; then
+            echo "| Additional Tag | \`latest\` (auto) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "| Push to Registry | ${{ inputs.push_to_registry }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs.push_to_registry }}" = "true" ]; then
+            echo "| amd64 Digest | \`${{ needs.build-amd64.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| arm64 Digest | \`${{ needs.build-arm64.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Manifest Digest | \`${{ needs.create-manifest.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            echo "## Pull Commands" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "# Pull multi-platform image (auto-selects architecture)" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.resolve-commit.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "# Or by manifest digest" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.create-manifest.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${{ needs.resolve-commit.outputs.build_type }}" = "master" ]; then
+              echo "## Updating ACL2" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "This is a \`master\` build. Inside the container, you can update ACL2 with:" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+              echo "cd /root/acl2 && git pull origin master" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "## Git Status" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "This is a \`commit\` build (detached HEAD). See INSTALL.md for updating instructions." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            echo "## Verification" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Verify amd64 attestation (arm64 is self-hosted, no attestation):" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "gh attestation verify oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-amd64.outputs.digest }} --owner ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            echo "Inspect manifest:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.resolve-commit.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** amd64 has SLSA Level 2+ attestation (GitHub-hosted). arm64 is built on self-hosted runner (no attestation)." >> $GITHUB_STEP_SUMMARY

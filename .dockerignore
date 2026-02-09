@@ -1,0 +1,5 @@
+# Ignore everything - the Dockerfile downloads ACL2 via git clone,
+# so nothing from the build context is needed.
+# See PLAN-multiplatform-docker-github-action.md for exclusion details
+# if modifying the Dockerfile to COPY from a local checkout instead.
+*
