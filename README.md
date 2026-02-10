@@ -1,6 +1,7 @@
 # ACL2 Docker Build Infrastructure
 
-**If you are looking for a Docker image with ACL2 in it, please see the [INSTALL.md](INSTALL.md) page.**
+**This page is about how to build Docker images with ACL2.**  
+**If you are looking for how to install and run a Docker image with ACL2, please go to the [INSTALL.md](INSTALL.md) page.**
 
 ---
 

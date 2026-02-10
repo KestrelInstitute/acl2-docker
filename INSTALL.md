@@ -6,22 +6,32 @@ For ACL2 documentation, tutorials, and reference material, see:
 
 ## Quick Start
 
+1. Pull the image
 ```bash
-# 1. Pull the image
 docker pull ghcr.io/kestrelinstitute/acl2:latest
+```
 
-# 2. Get a shell in the container
-#    Note: the --rm flag means to clean up the container after exit.
+2. Get a shell in the container. Note: the --rm flag means to clean up the container after exit.
+```bash
 docker run -it --rm ghcr.io/kestrelinstitute/acl2:latest bash
+```
 
-# 3. Certify the books you need (use -j for parallel jobs)
-cd books
-cert.pl -j4 std/lists/top
+Then inside the container:
 
-# 4. Run ACL2
+3. Certify the books you need (use -j for parallel jobs)
+```bash
+cd books && cert.pl -j4 std/lists/top
+```
+
+4. Run ACL2
+```bash
 acl2
+```
 
-# 5. Include the book you certified
+Then inside ACL2:
+
+5. Include the book you certified
+```lisp
 (include-book "std/lists/top" :dir :system)
 ```
 
@@ -42,8 +52,8 @@ Install Docker for your platform:
 
 Images are hosted on GitHub Container Registry: `ghcr.io/kestrelinstitute/acl2`
 
-| Tag | Description | Git Status |
-|-----|-------------|------------|
+| Tag | Description | Git Status inside image |
+|-----|-------------|-------------------------|
 | `latest` | Most recent master build | On `master` branch, `git pull origin master` works |
 | `master-abc1234` | Built from master at commit abc1234 | On `master` branch, `git pull origin master` works |
 | `commit-abc1234` | Built from specific commit abc1234 | Detached HEAD, see "Updating ACL2" section |
@@ -242,4 +252,38 @@ On Linux, you may need to adjust permissions or use the `--user` flag:
 
 ```bash
 docker run -it --rm --user $(id -u):$(id -g) -v /path:/work ghcr.io/kestrelinstitute/acl2:latest
+```
+
+### Keeping old images when updating
+
+When you pull a new `acl2:latest`, the previous image loses its tag.  Sometimes
+it remains on disk and shows up as `<none>` in `docker images`, and sometimes it becomes inaccessible.
+
+To keep old images available and easily identifiable, you can also pull the specific tag when
+you pull `latest`. You can find the current tag in the
+[GitHub Container Registry](https://ghcr.io/kestrelinstitute/acl2).
+The second pull just adds the tag — it doesn't re-download the image. For example:
+
+```bash
+docker pull ghcr.io/kestrelinstitute/acl2:latest \
+&& docker pull ghcr.io/kestrelinstitute/acl2:master-abc1234
+```
+
+### Cleaning up old images
+
+After pulling a new `acl2:latest`, the previous image may appear in
+`docker images` as `<none>`:
+
+```bash
+REPOSITORY                      TAG               IMAGE ID       CREATED         SIZE
+ghcr.io/kestrelinstitute/acl2   latest            9255e6ca65bc   2 hours ago     2.97GB
+<none>                          <none>            76fb5f3e6a6a   47 hours ago    2.97GB
+```
+
+This can happen when the old `acl2:latest` is still referenced by a stopped
+container (e.g., one that was run without `--rm`).  To clean up stopped containers
+and untagged images:
+
+```bash
+docker system prune
 ```
