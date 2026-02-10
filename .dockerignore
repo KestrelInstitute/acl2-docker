@@ -3,3 +3,4 @@
 # See PLAN-multiplatform-docker-github-action.md for exclusion details
 # if modifying the Dockerfile to COPY from a local checkout instead.
 *
+!fix-fasl-cert-timestamp-race.patch
