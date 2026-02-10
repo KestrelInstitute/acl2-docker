@@ -1,0 +1,31 @@
+diff --git a/interface-raw.lisp b/interface-raw.lisp
+index df30b3562d..0ec5f7ac81 100644
+--- a/interface-raw.lisp
++++ b/interface-raw.lisp
+@@ -5957,7 +5957,7 @@
+           (ofile (convert-book-string-to-compiled os-file state))
+           (ofile-exists (probe-file ofile))
+           (ofile-date (and ofile-exists (file-write-date ofile)))
+-          (ofile-p (and ofile-date cfile-date (>= ofile-date cfile-date)))
++          (ofile-p (and ofile-date cfile-date (>= ofile-date (1- cfile-date))))
+           (efile (and (not (eq load-compiled-file t))
+                       (expansion-filename os-file)))
+           (efile-exists (and efile (probe-file efile)))
+@@ -5993,7 +5993,7 @@
+         state))
+       ((not (or ofile-p
+                 (let ((efile-date (and efile-exists (file-write-date efile))))
+-                  (and efile-date (>= efile-date cfile-date)))))
++                  (and efile-date (>= efile-date (1- cfile-date))))))
+        (cond
+         (ofile-exists
+          (missing-compiled-book
+@@ -11603,7 +11603,7 @@ such that feature :acl2-loop-only is true."))
+                                      completion")
+                                    ((and cfile-write-date
+                                          efile-write-date
+-                                         (<= cfile-write-date efile-write-date))
++                                         (<= (1- cfile-write-date) efile-write-date))
+                                     nil)
+                                    (t
+                                     "the write-date of the expansion file is ~
