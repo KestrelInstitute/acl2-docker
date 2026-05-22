@@ -1,7 +1,7 @@
 # ACL2 Docker Build Infrastructure
 
 **This page is about how to build Docker images with ACL2.**  
-**If you are looking for how to install and run a Docker image with ACL2, please go to the [INSTALL.md](INSTALL.md) page.**
+**If you are looking for how to install and run a Docker image that contains ACL2, please go to the [INSTALL.md](INSTALL.md) page.**
 
 ---
 
@@ -32,12 +32,25 @@ Both platforms are combined into a single multi-platform image. Docker automatic
 
 ## Building Images
 
-Images are built via GitHub Actions workflow dispatch. Only repository maintainers can trigger builds.
+Images are built via GitHub Actions workflow dispatch. Only repository maintainers (users with write access) can trigger builds.
+
+Before you dispatch:
+
+- A self-hosted ARM64 runner must be online (the runner host must be running `./run.sh` or `./svc.sh start`).
+- Docker Desktop must be running on the self-hosted host — the `build-arm64` job uses it to build the Linux ARM64 image.
+
+See "Self-Hosted ARM64 Runner" below and [RUNNER-SETUP.md](RUNNER-SETUP.md) for details.
+
+You can dispatch the workflow two ways:
+
+- **Web UI** — Go to the [workflow page](https://github.com/KestrelInstitute/acl2-docker/actions/workflows/docker-multiplatform-selfhosted.yml) (Actions tab → "Build ACL2 Docker (Multi-Platform)"). Click the **"Run workflow"** button on the right side of the banner above the runs list. A small form appears with the inputs described in "Workflow Inputs" below. Fill it in and click the green **"Run workflow"** button at the bottom of the form to start the build.
+- **`gh` CLI** — Use `gh workflow run docker-multiplatform-selfhosted.yml` with `-f name=value` flags for inputs. See "Example Commands" below.
 
 ### Workflow Inputs
 
 | Input | Description |
 |-------|-------------|
+| `Use workflow from` | The branch/tag/SHA of *this* (`acl2-docker`) repo whose workflow definition to run. Default: `Branch: main`. Leave as-is unless you are testing workflow changes on a different branch. Note: this selects the *workflow* version, not the ACL2 version. |
 | `ACL2 ref/commit to build` | Usually left blank (builds latest master). Enter a commit hash/branch/tag for a specific version. |
 | `Extra tag` | Usually left blank. The `latest` tag is added automatically for master builds. |
 | `Push to registry?` | Defaults to checked. Uncheck to test build without pushing. |
@@ -62,6 +75,22 @@ gh workflow run docker-multiplatform-selfhosted.yml \
   -f acl2_ref=abc1234def5678 \
   -f push_to_registry=true
 ```
+
+## Self-Hosted ARM64 Runner
+
+The `build-arm64` job in the workflow runs on a maintainer's Apple Silicon Mac
+registered as a GitHub Actions self-hosted runner. This is necessary because
+GitHub-hosted ARM64 runners cannot build ACL2 (see "Why Self-Hosted Runner for
+ARM64?" below).
+
+A registered runner already exists, so day-to-day builds do not require any
+local setup. If you are a new `KestrelInstitute/acl2-docker` maintainer and
+want to enable ARM64 builds on your own Mac (for example as a backup, or so
+that you can trigger builds without coordinating with another maintainer), see
+[RUNNER-SETUP.md](RUNNER-SETUP.md). The short version: visit the repo's
+Settings → Actions → Runners → "New self-hosted runner" page, which generates
+install commands with a fresh registration token; run them on your Mac;
+accept the default labels (`self-hosted, macOS, ARM64`).
 
 ## Technical Details
 

@@ -76,11 +76,11 @@ gh attestation verify oci://ghcr.io/kestrelinstitute/acl2:latest --owner Kestrel
 
 ### Mounting Local Files
 
-To access your local files from inside the container, use the `-v` flag. Your files will be available at `/work` inside the container.
+To access your local files from inside the container, use the `-v` flag. In the following examples your files will be available at `/work` inside the container.
 
 **Linux:**
 ```bash
-docker run -it --rm -v /path/to/your/books:/work ghcr.io/kestrelinstitute/acl2:latest bash
+docker run -it --rm -v /path/to/my-acl2-project:/work ghcr.io/kestrelinstitute/acl2:latest bash
 ```
 
 **macOS:**
@@ -175,10 +175,10 @@ cd /root/acl2
 git pull origin master
 ```
 
-After updating, rebuild the ACL2 executable:
+After updating, rebuild the ACL2 executable if anything going into it has changed:
 
 ```bash
-make LISP=`which sbcl`
+make update LISP=`which sbcl`
 ```
 
 You may want to certify some books before committing the new docker image.
@@ -197,10 +197,10 @@ git fetch origin master
 git checkout -B master origin/master
 ```
 
-After updating, rebuild the ACL2 executable:
+After updating, rebuild the ACL2 executable if anything going into it has changed:
 
 ```bash
-make LISP=`which sbcl`
+make update LISP=`which sbcl`
 ```
 
 You may want to certify some books before committing the new docker image.
