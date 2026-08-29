@@ -91,13 +91,13 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout workflow repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -105,8 +105,10 @@ jobs:
 
       - name: Build and push amd64 image
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
+          # keep pushes as plain manifests (v6+ defaults provenance on for pushes)
+          provenance: false
           context: .
           file: ./Dockerfile
           # 'target: runtime' tells Docker to build the lean ACL2 image
@@ -135,13 +137,13 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout workflow repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -149,8 +151,10 @@ jobs:
 
       - name: Build and push arm64 image
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
+          # keep pushes as plain manifests (v6+ defaults provenance on for pushes)
+          provenance: false
           context: .
           file: ./Dockerfile
           # 'target: runtime' tells Docker to build the lean ACL2 image
@@ -184,7 +188,7 @@ jobs:
     if: ${{ inputs.push_to_registry }}
     steps:
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -208,10 +212,10 @@ jobs:
       digest: ${{ steps.manifest.outputs.digest }}
     steps:
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

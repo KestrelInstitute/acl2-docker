@@ -317,8 +317,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG Z3_SOLVER_VERSION=5.0.0.0
 
-# python3/venv support for the Smtlink solver setup below
+# - python3/python3-venv: for the Smtlink solver setup below
+# - libboost-program-options1.83.0: runtime library needed by the stp
+#   executable (its other library dependencies are either copied from
+#   stp-builder below or already present via build-essential)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libboost-program-options1.83.0 \
     python3 \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*

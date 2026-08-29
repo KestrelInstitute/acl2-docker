@@ -29,7 +29,7 @@ builds want a beefy machine: many cores, lots of RAM, lots of disk.
   jobs ≈ min(cores, RAM / 4 GB); the workflow's `cert_jobs` input lets you
   set this (blank = all cores).
 - **Disk:** 200+ GB free for Docker (`/var/lib/docker`) recommended.  The
-  certified image is tens of GB, and the build additionally holds
+  allcerts image is tens of GB, and the build additionally holds
   intermediate layers and the Docker build cache.
 - Admin access to the `KestrelInstitute/acl2-docker` repository (required to
   generate the registration token).
@@ -229,7 +229,8 @@ The runner's user is not in the `docker` group (see Step 1).  After
 
 ### Build fails with "no space left on device"
 
-The certified image and its build cache are large.  Clean up between builds:
+The image with certified books is large and its build cache is large.  
+Clean up between builds:
 
 ```bash
 docker system prune          # stopped containers + dangling images
