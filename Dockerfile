@@ -375,9 +375,14 @@ RUN z3 --version && \
 #   happen in the same layer as the certification, because deleting files in
 #   a later layer would not reduce image size.
 # - What include-book needs: the .lisp sources, the .cert files, and the
-#   compiled .fasl files.  .port files are only read when including
-#   UNCERTIFIED books (see the ACL2 sources, other-events.lisp), so we delete
-#   a .port only when the book's .cert exists.
+#   compiled .fasl files.
+# - .port files are KEPT even though include-book does not read them for
+#   certified books: cert.pl loads the .port file of every included book
+#   before certifying a book (see make_cert_help.pl, and the ";; no_port"
+#   note in cert.pl), so certifying any NEW book on top of the ones in the
+#   image -- including the allcerts stage certifying the non-kestrel books
+#   on top of kcerts -- fails with missing-package errors without them.
+#   They are small; the space win from deleting them is negligible anyway.
 # - .cert.out files of successful books were already removed during the run
 #   by CERT_PL_RM_OUTFILES; failed books keep theirs, which is how the
 #   failure report below identifies them.
@@ -396,8 +401,6 @@ if "$@" 2>&1 | tee /tmp/certify.log ; then
        -o -name '*.cert.time' -o -name '*.acl2x' \
        -o -name '*.pcert0' -o -name '*.pcert1' \
        -o -name '*@expansion.lsp' -o -name 'workxxx*' \) -delete
-  find . -type f -name '*.port' \
-       -exec bash -c 'for p; do [[ -f "${p%.port}.cert" ]] && rm -f -- "$p"; done' _ {} +
   rm -f /tmp/certify.log
   echo "Final books directory size:"
   du -sh .
@@ -441,9 +444,9 @@ RUN J="${CERT_JOBS:-$(nproc)}" && \
 # no image is produced).
 #
 # This stage builds on 'kcerts', so the kestrel books are already certified
-# (make's up-to-dateness checks skip them; their .cert files are intact even
-# though kcerts' cleanup removed .port/.cert.time files) and the regression
-# certifies only the remaining books.  Building this target therefore builds
+# (make's up-to-dateness checks skip them; their .cert and .port files are
+# intact -- cert.pl needs the .port files of included books when certifying
+# new books on top) and the regression certifies only the remaining books.  Building this target therefore builds
 # the kcerts stage first; on a runner that has already built kcerts for the
 # same ACL2 commit and build args, those layers come from the Docker cache.
 FROM kcerts AS allcerts

@@ -107,12 +107,13 @@ Notes:
     the `SLOW_BOOKS` list in `books/GNUmakefile` (a handful of very slow
     books, e.g. the x86isa and filesystem proof developments).
 - **Removed artifacts**: to keep the image (relatively) small, files not
-  needed by `include-book` were deleted after certification: `.cert.out`
-  proof logs, `.cert.time`, `.acl2x`, `.pcert0`/`.pcert1`, `@expansion.lsp`,
-  `workxxx`, and `.port` files of certified books.  Each certified book
-  retains its source, its `.cert`, and its compiled `.fasl`.  (ACL2 reads
-  `.port` files only when including *uncertified* books, so certified books
-  do not need them.)  If you want to see a book's proof output, just
+  needed after certification were deleted: `.cert.out` proof logs,
+  `.cert.time`, `.acl2x`, `.pcert0`/`.pcert1`, `@expansion.lsp`, and
+  `workxxx` files.  Each certified book retains its source, its `.cert`,
+  its compiled `.fasl`, and its `.port` file.  (The `.port` files are kept
+  because cert.pl loads the `.port` file of every included book when
+  certifying a book, so they are needed to certify new books on top of the
+  ones in the image.)  If you want to see a book's proof output, just
   re-certify it in the container.
 - **`CERT_PL_RM_OUTFILES=1`** is set in the image, so books you certify
   yourself also have their `.cert.out` deleted on success (failures keep

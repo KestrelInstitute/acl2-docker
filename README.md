@@ -172,11 +172,12 @@ GitHub's ARM64 runners use Ampere/Neoverse CPUs that don't support floating-poin
   used by Smtlink. The Smtlink configuration file `/root/smtlink-config`
   points at the venv's Python by absolute path and is written before
   certification, so the certified Smtlink books have it baked in.
-- Certification artifacts **not** needed by `include-book` are removed:
+- Certification artifacts that are no longer needed are removed:
   `.cert.out`, `.cert.time`, `.acl2x`, `.pcert0`/`.pcert1`, `@expansion.lsp`,
-  and `workxxx` files, plus `.port` files for certified books (ACL2 only
-  reads `.port` files when including *uncertified* books). What remains for
-  each book: the source, its `.cert` file, and its compiled `.fasl` file.
+  and `workxxx` files. What remains for each book: the source, its `.cert`
+  file, its compiled `.fasl` file, and its `.port` file (kept because
+  cert.pl loads the `.port` files of included books when certifying new
+  books on top of the ones in the image).
 
 ### Build Attestation
 
