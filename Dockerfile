@@ -1,7 +1,36 @@
 # syntax=docker/dockerfile:1
 #
-# Multi-platform Dockerfile for ACL2 on SBCL
-# Builds for linux/amd64 and linux/arm64
+# Multi-stage Dockerfile for ACL2 on SBCL.
+#
+# This file has three final build targets, selected with --target:
+#
+#   runtime    - Lean image: SBCL + ACL2 + books as source (not certified).
+#                Built for linux/amd64 and linux/arm64 by
+#                .github/workflows/docker-multiplatform-selfhosted.yml
+#
+#   kcerts     - Medium image: everything in 'runtime', plus the
+#                STP and Z3 solvers, with all the books reachable from
+#                kestrel/top certified.
+#                Built for linux/amd64 and linux/arm64 by
+#                .github/workflows/docker-kcerts-selfhosted.yml
+#
+#   allcerts   - Large linux/amd64 image: everything in 'kcerts', plus the
+#                rest of the books of the standard "make regression" suite
+#                certified.  Built by
+#                .github/workflows/docker-allcerts-selfhosted.yml
+#
+# ('kcerts' builds on the intermediate 'cert-base' stage, which adds the
+# solvers and a common certify-and-clean script, and 'allcerts' builds on
+# 'kcerts': its regression skips the already-certified kestrel books and
+# certifies the rest.  This layering means an allcerts build produces the
+# (linux/amd64) kcerts image along the way, the two images share their
+# kestrel layers, and the allcerts certification artifacts are split across
+# two layers instead of one very large one.)
+#
+# IMPORTANT: 'allcerts' is the last stage in this file, so a plain
+# "docker build ." with no --target builds the allcerts image, which runs a
+# full book regression and can take hours.  For the lean image, build with:
+#   docker build --target runtime .
 #
 # =============================================================================
 # SBCL VERSION CONFIGURATION
@@ -14,7 +43,16 @@ ARG SBCL_SHA256=5f2cd5bb7d3e6d9149a59c05acd8429b3be1849211769e5a37451d001e196d7f
 # =============================================================================
 #
 # Other build arguments:
-#   ACL2_COMMIT  - ACL2 commit/tag/branch to build (default: master)
+#   ACL2_COMMIT       - ACL2 commit/tag/branch to build (default: master)
+#   ACL2_BUILD_TYPE   - "master" or "commit" (see acl2-builder stage)
+#
+# Build arguments used only by the 'kcerts' and 'allcerts' targets:
+#   STP_VERSION       - STP release tag to build from source
+#   MINISAT_COMMIT    - commit of STP's minisat fork (STP build dependency)
+#   Z3_SOLVER_VERSION - version of the z3-solver PyPI package, which provides
+#                       both the z3 executable and the Python bindings that
+#                       Smtlink uses
+#   CERT_JOBS         - parallel book certification jobs (default: nproc)
 
 # =============================================================================
 # Stage 1: Build SBCL from source
@@ -147,25 +185,21 @@ RUN make LISP=/usr/local/bin/sbcl-acl2 || (cat make.log && exit 1)
 # See books/build/features.sh for details on what this generates.
 RUN cd books && make ACL2=/root/acl2/saved_acl2 build/Makefile-features
 
-# Note: Books are NOT certified during build.
-# Users certify the books they need when running the image.
+# Note: Books are NOT certified in this stage.
+# The 'runtime' image ships them uncertified; the 'kcerts' and 'allcerts'
+# stages below certify them (kestrel/top's dependency tree and the full
+# regression suite, respectively).
 
 # =============================================================================
-# Stage 3: Runtime image
+# Stage 3: Common runtime environment (shared by all final targets)
 # =============================================================================
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS runtime-base
 
 # OCI labels (additional labels added by workflow)
 LABEL org.opencontainers.image.title="ACL2"
 LABEL org.opencontainers.image.description="ACL2 theorem prover built on SBCL"
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 LABEL org.opencontainers.image.url="https://www.cs.utexas.edu/~moore/acl2/"
-
-# Copy SBCL runtime
-COPY --from=sbcl-builder /usr/local /usr/local
-
-# Copy ACL2
-COPY --from=acl2-builder /root/acl2 /root/acl2
 
 # Runtime dependencies
 # - build-essential: some books (e.g., quicklisp) compile C code during certification
@@ -192,10 +226,229 @@ ENV PATH="${ACL2_ROOT}/bin:${ACL2_ROOT}/books/build:${PATH}"
 # USER is required by oslib::default-tempfile-aux
 ENV USER="root"
 
+WORKDIR /root/acl2
+
+CMD ["acl2"]
+
+# =============================================================================
+# Stage 4: Lean runtime image (build target: runtime)
+# =============================================================================
+FROM runtime-base AS runtime
+
+# Copy SBCL runtime
+COPY --from=sbcl-builder /usr/local /usr/local
+
+# Copy ACL2
+COPY --from=acl2-builder /root/acl2 /root/acl2
+
 # Optional: Remove .out files after book certification to save space.
 # Uncomment if disk space becomes an issue during large regressions.
 # ENV CERT_PL_RM_OUTFILES="1"
 
-WORKDIR /root/acl2
+# =============================================================================
+# Stage 5: Build the STP solver from source (used via 'cert-base')
+# =============================================================================
+# STP is not packaged for Ubuntu, so we build it (and its minisat dependency)
+# from source.  STP is used by the Axe toolkit (books/kestrel/axe); the books
+# build system enables the STP-dependent books when 'stp --version' works
+# (see books/build/features.sh).
+FROM ubuntu:24.04 AS stp-builder
 
-CMD ["acl2"]
+# STP release tag, and the commit of STP's minisat fork to build against.
+# (The minisat fork has no releases, so we pin a known-good commit.)
+ARG STP_VERSION=2.4.1
+ARG MINISAT_COMMIT=14c78206cd12d1d36b7e042fa758747c135670a4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bison \
+    build-essential \
+    ca-certificates \
+    cmake \
+    flex \
+    git \
+    libboost-program-options-dev \
+    libgmp-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Build minisat (STP's fork).  Install both into this stage (so the STP build
+# can find it) and into /stage (staging tree copied into the final image).
+RUN git init minisat && \
+    cd minisat && \
+    git remote add origin https://github.com/stp/minisat && \
+    git fetch --depth 1 origin ${MINISAT_COMMIT} && \
+    git checkout FETCH_HEAD && \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build -j"$(nproc)" && \
+    cmake --install build && \
+    DESTDIR=/stage cmake --install build
+
+# Build STP.
+# - lib/extlib-abc is a required submodule.
+# - STP_ALLOCATOR=system avoids needing the mimalloc submodule.
+# - The Python interface is not needed (Axe invokes the stp executable).
+RUN git clone --depth 1 --branch ${STP_VERSION} https://github.com/stp/stp && \
+    cd stp && \
+    git submodule update --init --depth 1 lib/extlib-abc && \
+    cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DENABLE_PYTHON_INTERFACE=OFF \
+      -DSTP_ALLOCATOR=system && \
+    cmake --build build -j"$(nproc)" && \
+    cmake --install build && \
+    DESTDIR=/stage cmake --install build && \
+    ldconfig && \
+    stp --version
+
+# =============================================================================
+# Stage 6: Common certification environment (shared by 'kcerts' and 'allcerts')
+# =============================================================================
+# Starts from the lean runtime image and adds:
+#   - STP (for Axe) and Z3 (for Smtlink)
+#   - a shared certify-books-and-clean script (used by both cert stages)
+# No books are certified in this stage.
+FROM runtime AS cert-base
+
+# Use bash with pipefail so failures aren't masked by pipes (e.g. tee below).
+# (SHELL is inherited by the 'kcerts' and 'allcerts' stages.)
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG Z3_SOLVER_VERSION=5.0.0.0
+
+# python3/venv support for the Smtlink solver setup below
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- STP (for Axe) ----
+COPY --from=stp-builder /stage/usr/local/ /usr/local/
+RUN ldconfig && stp --version
+
+# ---- Z3 (for Smtlink) ----
+# The z3-solver PyPI package provides the z3 executable AND the matching
+# Python bindings in one place: /root/.venvs/smtlink/bin contains 'z3' and
+# 'python'.  We append that directory to PATH so that:
+#   - books/build/features.sh finds 'z3 --version' and enables the
+#     Smtlink-dependent books (OS_HAS_SMTLINK), and
+#   - it does not shadow the system python3.
+RUN python3 -m venv /root/.venvs/smtlink && \
+    /root/.venvs/smtlink/bin/pip install --no-cache-dir "z3-solver==${Z3_SOLVER_VERSION}"
+ENV PATH="${PATH}:/root/.venvs/smtlink/bin"
+
+# Smtlink reads its configuration from $SMT_HOME/smtlink-config, then
+# $HOME/smtlink-config, then the smtlink book directory (see
+# books/projects/smtlink/config.lisp).  We write $HOME/smtlink-config with an
+# absolute path BEFORE certification, so this value is baked into the
+# certified smtlink books and does not depend on PATH at proof time.
+RUN printf 'smt-cmd=/root/.venvs/smtlink/bin/python\n' > /root/smtlink-config
+
+# Delete each book's .cert.out file as soon as it certifies successfully.
+# This keeps disk usage down during the regression, and the .cert.out files
+# of FAILED certifications are kept (useful for debugging).  We leave this
+# set in the final image; users certifying additional books get the same
+# behavior, which keeps committed containers small.
+ENV CERT_PL_RM_OUTFILES="1"
+
+# Sanity-check both solvers exactly the way the books use them, BEFORE
+# spending hours on the regression:
+# - z3/python check mirrors books/projects/smtlink/README.md
+# - teststp.bash is Axe's own end-to-end STP test; it must print "Valid."
+RUN z3 --version && \
+    /root/.venvs/smtlink/bin/python -c "import z3; print('z3 python bindings:', z3.get_version_string())" && \
+    out="$(bash books/kestrel/axe/teststp.bash)" && \
+    echo "$out" && \
+    echo "$out" | grep -q 'Valid\.' && \
+    rm -f books/kestrel/axe/teststp.out
+
+# Shared certification driver, used by the 'kcerts' and 'allcerts' stages.
+# It runs the given certification command from the books/ directory and, on
+# success, removes the certification artifacts not needed by include-book.
+# Notes:
+# - Each cert stage runs this in a SINGLE RUN instruction: the cleanup must
+#   happen in the same layer as the certification, because deleting files in
+#   a later layer would not reduce image size.
+# - What include-book needs: the .lisp sources, the .cert files, and the
+#   compiled .fasl files.  .port files are only read when including
+#   UNCERTIFIED books (see the ACL2 sources, other-events.lisp), so we delete
+#   a .port only when the book's .cert exists.
+# - .cert.out files of successful books were already removed during the run
+#   by CERT_PL_RM_OUTFILES; failed books keep theirs, which is how the
+#   failure report below identifies them.
+COPY <<'EOF' /usr/local/bin/certify-books-and-clean
+#!/bin/bash
+# Usage: certify-books-and-clean <certification command...>
+# Runs the command from ${ACL2_ROOT}/books, then cleans up (see Dockerfile).
+# Strict: exits nonzero if the command fails, listing the failed books.
+set -u -o pipefail
+cd "${ACL2_ROOT}/books"
+if "$@" 2>&1 | tee /tmp/certify.log ; then
+  echo "Certification succeeded."
+  echo "Removing certification artifacts not needed by include-book..."
+  find . -type f \( -name '*.cert.out' -o -name '*.acl2x.out' \
+       -o -name '*.pcert0.out' -o -name '*.pcert1.out' \
+       -o -name '*.cert.time' -o -name '*.acl2x' \
+       -o -name '*.pcert0' -o -name '*.pcert1' \
+       -o -name '*@expansion.lsp' -o -name 'workxxx*' \) -delete
+  find . -type f -name '*.port' \
+       -exec bash -c 'for p; do [[ -f "${p%.port}.cert" ]] && rm -f -- "$p"; done' _ {} +
+  rm -f /tmp/certify.log
+  echo "Final books directory size:"
+  du -sh .
+else
+  echo "=============================================================="
+  echo "CERTIFICATION FAILED.  Books whose certification failed"
+  echo "(each kept its .cert.out file; see the log above for details,"
+  echo "or search it for 'CERTIFICATION FAILED'):"
+  find . -name '*.cert.out' | sort
+  echo "=============================================================="
+  exit 1
+fi
+EOF
+RUN chmod +x /usr/local/bin/certify-books-and-clean
+
+# =============================================================================
+# Stage 7: Kcerts image (build target: kcerts)
+# =============================================================================
+# Certifies kestrel/top and every book it depends on, using cert.pl.
+# --keep-going: one broken book doesn't hide the others; cert.pl still exits
+# nonzero at the end if anything failed, which fails this build (strict mode:
+# no image is produced).
+FROM cert-base AS kcerts
+
+LABEL org.opencontainers.image.title="ACL2 (kestrel books certified)"
+LABEL org.opencontainers.image.description="ACL2 theorem prover built on SBCL, with the books reachable from kestrel/top certified and the STP and Z3 solvers included"
+
+ARG CERT_JOBS=
+
+RUN J="${CERT_JOBS:-$(nproc)}" && \
+    echo "Certifying kestrel/top and its dependencies with -j${J}..." && \
+    certify-books-and-clean cert.pl -j "${J}" --keep-going kestrel/top
+
+# =============================================================================
+# Stage 8: Allcerts image (build target: allcerts)
+# =============================================================================
+# Certifies all books in the standard "make regression" suite: all books
+# except a small SLOW_BOOKS list (see books/GNUmakefile).  The regression
+# runs with -k (keep going), so every book that can certify does; make exits
+# nonzero at the end if anything failed, which fails this build (strict mode:
+# no image is produced).
+#
+# This stage builds on 'kcerts', so the kestrel books are already certified
+# (make's up-to-dateness checks skip them; their .cert files are intact even
+# though kcerts' cleanup removed .port/.cert.time files) and the regression
+# certifies only the remaining books.  Building this target therefore builds
+# the kcerts stage first; on a runner that has already built kcerts for the
+# same ACL2 commit and build args, those layers come from the Docker cache.
+FROM kcerts AS allcerts
+
+LABEL org.opencontainers.image.title="ACL2 (all regression books certified)"
+LABEL org.opencontainers.image.description="ACL2 theorem prover built on SBCL, with all regression books certified and the STP and Z3 solvers included"
+
+ARG CERT_JOBS=
+
+RUN J="${CERT_JOBS:-$(nproc)}" && \
+    echo "Certifying the full regression suite with -j${J}..." && \
+    certify-books-and-clean make -j"${J}" regression ACL2="${ACL2}"

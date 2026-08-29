@@ -1,5 +1,13 @@
 # Setting Up Your Mac as a Self-Hosted ARM64 Runner
 
+*(This file was formerly named `RUNNER-SETUP.md`.  It covers the macOS ARM64
+runner used by the **multi-platform** workflow's `build-arm64` job and the
+**kcerts** workflow's `build-kcerts-arm64` job (which certifies the
+kestrel/top books for arm64 — give Docker Desktop plenty of memory, 32 GB
+recommended, before dispatching kcerts).  For the Ubuntu x86-64 runner used
+by the **kcerts** and **allcerts** workflows' amd64 jobs, see
+[RUNNER-SETUP-UBUNTU-AMD64.md](RUNNER-SETUP-UBUNTU-AMD64.md).)*
+
 This guide is for `KestrelInstitute/acl2-docker` maintainers who want to enable
 ARM64 Docker builds on their own Apple Silicon Mac. Once your Mac is registered
 as a self-hosted runner, the `docker-multiplatform-selfhosted.yml` workflow will
