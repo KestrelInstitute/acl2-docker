@@ -122,6 +122,83 @@ Notes:
   but rarely useful: previously certified books become stale with respect to
   the new executable.  Prefer pulling a newer image build.
 
+### Using the images from a Claude (Cowork) cloud session
+
+Claude's cloud sandboxes can pull and run these images, which turns a fresh
+Claude session into a ready-to-go ACL2 development environment in a couple of
+minutes (no building, no book certification).
+
+**One-time account setup** (a human must do this; Claude cannot): the
+sandbox's network must be allowed to reach the registry.  In the Claude app
+under **Settings → Capabilities → Domain allowlist**, keep "Package managers
+only" and add two **Additional allowed domains**:
+
+```
+ghcr.io
+pkg-containers.githubusercontent.com
+```
+
+(The first serves the image manifests; the second serves the actual layer
+blobs, so pulls fail partway without it.)
+
+![Claude Capabilities settings showing ghcr.io and pkg-containers.githubusercontent.com in the Additional allowed domains list](images/claude-domain-allowlist.png)
+
+**Then paste this to a new Claude session:**
+
+> Please set up ACL2 in this sandbox from the prebuilt Docker image, as
+> follows.
+>
+> 1. The Docker daemon is not running by default, and it must be started
+>    with this sandbox's egress proxy settings or registry pulls fail
+>    with 403:
+>
+>    ```bash
+>    sudo env HTTP_PROXY="$HTTPS_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
+>      dockerd --iptables=false --ip6tables=false > /tmp/dockerd.log 2>&1 &
+>    ```
+>
+> 2. Pull `ghcr.io/kestrelinstitute/acl2-allcerts:latest` (all regression
+>    books certified), or `ghcr.io/kestrelinstitute/acl2-kcerts:latest`
+>    (smaller; the kestrel/top books).  These are linux/amd64 images.
+>    If a tag is not found, list what exists with an anonymous token:
+>    `curl -s "https://ghcr.io/token?scope=repository:kestrelinstitute/acl2-allcerts:pull"`
+>    then GET `https://ghcr.io/v2/kestrelinstitute/acl2-allcerts/tags/list`
+>    with that bearer token.
+>
+> 3. Do ACL2 work inside the container (mount the working directory):
+>
+>    ```bash
+>    docker run -it --rm -v "$PWD":/work -w /work \
+>      ghcr.io/kestrelinstitute/acl2-allcerts:latest bash
+>    ```
+>
+>    Inside: `acl2` starts ACL2, and every book in the image's certified
+>    set can be included immediately, e.g.
+>    `(include-book "kestrel/axe/top" :dir :system)`.  The STP solver (for
+>    Axe) and Z3 (for Smtlink) are installed and configured.
+>
+> 4. To certify a NEW book, use `cert.pl my-book` (from the directory
+>    containing it).  If the book uses Axe's STP tools (`defthm-stp`,
+>    `prove-with-stp`, ...), first create `my-book.acl2` next to it
+>    containing:
+>
+>    ```
+>    ; cert-flags: ? t :ttags :all :skip-proofs-okp t
+>    ```
+>
+>    (ttags because Axe's solver interface carries trust tags;
+>    skip-proofs-okp because STP-backed events are recorded that way.)
+>
+> 5. Sanity checks that should all succeed: `stp --version` and
+>    `z3 --version` in the container; a small `defthm-stp` proof; and
+>    `find books -name '*.cert' | wc -l` reporting thousands of books.
+
+Notes: the sandbox typically has few cores and modest RAM, which is fine
+for interactive proof development and certifying small books, but not for
+re-certifying large books or running wide parallel regressions — that is
+what the pre-certified images are for.  The `docker save`/release-asset
+route is an alternative when registry access is unavailable.
+
 ---
 
 ## Setup
