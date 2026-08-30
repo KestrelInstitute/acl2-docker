@@ -199,6 +199,69 @@ re-certifying large books or running wide parallel regressions — that is
 what the pre-certified images are for.  The `docker save`/release-asset
 route is an alternative when registry access is unavailable.
 
+### Driving ACL2 through the acl2-mcp server (recommended for agents)
+
+For more than a couple of ACL2 interactions, the
+[acl2-mcp](https://github.com/bendyarm/acl2-mcp) server is much more
+efficient than piping commands into `acl2`: it keeps a **persistent ACL2
+session**, so the world (included books, definitions, theorems) survives
+across an agent's tool calls instead of being rebuilt in a fresh ACL2 for
+every shell command.  Claude cloud sandboxes cannot register MCP servers in
+their tool harness, but the server can be driven directly over stdio using
+the dependency-free client shipped in the acl2-mcp repository.
+
+**Paste this to the Claude session after the image setup above:**
+
+> Please also set up the acl2-mcp server so ACL2 interactions keep a
+> persistent session, as follows.
+>
+> 1. Run the image as a persistent container and install the server in it
+>    (host networking so pip can reach PyPI; the sandbox intercepts TLS
+>    with its own CA, which the container must be told to trust):
+>
+>    ```bash
+>    git clone https://github.com/bendyarm/acl2-mcp
+>    docker run -d --name acl2dev --network=host \
+>      -v "$PWD/acl2-mcp":/opt/acl2-mcp -v "$PWD":/work \
+>      ghcr.io/kestrelinstitute/acl2-allcerts:latest sleep infinity
+>    for f in /usr/local/share/ca-certificates/*.crt; do
+>      docker cp "$f" acl2dev:/usr/local/share/ca-certificates/
+>    done
+>    docker exec acl2dev bash -c \
+>      'update-ca-certificates && python3 -m venv /root/.venvs/mcp \
+>       && /root/.venvs/mcp/bin/pip install --quiet /opt/acl2-mcp'
+>    ```
+>
+> 2. Verify with the client's self-test (it starts a session, evaluates
+>    `(+ 1 2)`, and ends the session):
+>
+>    ```bash
+>    python3 acl2-mcp/for-agents/mcp_stdio_client.py \
+>      docker exec -i acl2dev /root/.venvs/mcp/bin/acl2-mcp
+>    ```
+>
+> 3. Then drive ACL2 from your own Python using that client.  IMPORTANT:
+>    sessions live inside the server process, so create ONE `MCP` instance
+>    and keep it alive for the whole interaction (e.g. run a long-lived
+>    driver script, or structure work as one script per proof task):
+>
+>    ```python
+>    import sys; sys.path.insert(0, "acl2-mcp/for-agents")
+>    from mcp_stdio_client import MCP
+>    m = MCP(["docker", "exec", "-i", "acl2dev", "/root/.venvs/mcp/bin/acl2-mcp"])
+>    m.initialize()
+>    sid = m.start_session()
+>    print(m.call("evaluate", {"code": '(include-book "kestrel/axe/top" :dir :system)',
+>                              "session_id": sid}))
+>    print(m.call("evaluate", {"code": "(defthm ...)", "session_id": sid}))
+>    ```
+>
+>    The most useful tools: `evaluate` (anything you would type at the
+>    ACL2 prompt, including `:pe`, `:pbt`, `:doc`), `undo`,
+>    `certify_book` (cert.pl-backed), `admit` (try an event without
+>    committing it), and `end_session`.  Books already certified in the
+>    image include instantly inside a session.
+
 ---
 
 ## Setup
