@@ -145,53 +145,55 @@ blobs, so pulls fail partway without it.)
 
 **Then paste this to a new Claude session:**
 
-> Please set up ACL2 in this sandbox from the prebuilt Docker image, as
-> follows.
->
-> 1. The Docker daemon is not running by default, and it must be started
->    with this sandbox's egress proxy settings or registry pulls fail
->    with 403:
->
->    ```bash
->    sudo env HTTP_PROXY="$HTTPS_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
->      dockerd --iptables=false --ip6tables=false > /tmp/dockerd.log 2>&1 &
->    ```
->
-> 2. Pull `ghcr.io/kestrelinstitute/acl2-allcerts:latest` (all regression
->    books certified), or `ghcr.io/kestrelinstitute/acl2-kcerts:latest`
->    (smaller; the kestrel/top books).  These are linux/amd64 images.
->    If a tag is not found, list what exists with an anonymous token:
->    `curl -s "https://ghcr.io/token?scope=repository:kestrelinstitute/acl2-allcerts:pull"`
->    then GET `https://ghcr.io/v2/kestrelinstitute/acl2-allcerts/tags/list`
->    with that bearer token.
->
-> 3. Do ACL2 work inside the container (mount the working directory):
->
->    ```bash
->    docker run -it --rm -v "$PWD":/work -w /work \
->      ghcr.io/kestrelinstitute/acl2-allcerts:latest bash
->    ```
->
->    Inside: `acl2` starts ACL2, and every book in the image's certified
->    set can be included immediately, e.g.
->    `(include-book "kestrel/axe/top" :dir :system)`.  The STP solver (for
->    Axe) and Z3 (for Smtlink) are installed and configured.
->
-> 4. To certify a NEW book, use `cert.pl my-book` (from the directory
->    containing it).  If the book uses Axe's STP tools (`defthm-stp`,
->    `prove-with-stp`, ...), first create `my-book.acl2` next to it
->    containing:
->
->    ```
->    ; cert-flags: ? t :ttags :all :skip-proofs-okp t
->    ```
->
->    (ttags because Axe's solver interface carries trust tags;
->    skip-proofs-okp because STP-backed events are recorded that way.)
->
-> 5. Sanity checks that should all succeed: `stp --version` and
->    `z3 --version` in the container; a small `defthm-stp` proof; and
->    `find books -name '*.cert' | wc -l` reporting thousands of books.
+````text
+Please set up ACL2 in this sandbox from the prebuilt Docker image, as
+follows.
+
+1. The Docker daemon is not running by default, and it must be started
+   with this sandbox's egress proxy settings or registry pulls fail
+   with 403:
+
+   ```bash
+   sudo env HTTP_PROXY="$HTTPS_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
+     dockerd --iptables=false --ip6tables=false > /tmp/dockerd.log 2>&1 &
+   ```
+
+2. Pull `ghcr.io/kestrelinstitute/acl2-allcerts:latest` (all regression
+   books certified), or `ghcr.io/kestrelinstitute/acl2-kcerts:latest`
+   (smaller; the kestrel/top books).  These are linux/amd64 images.
+   If a tag is not found, list what exists with an anonymous token:
+   `curl -s "https://ghcr.io/token?scope=repository:kestrelinstitute/acl2-allcerts:pull"`
+   then GET `https://ghcr.io/v2/kestrelinstitute/acl2-allcerts/tags/list`
+   with that bearer token.
+
+3. Do ACL2 work inside the container (mount the working directory):
+
+   ```bash
+   docker run -it --rm -v "$PWD":/work -w /work \
+     ghcr.io/kestrelinstitute/acl2-allcerts:latest bash
+   ```
+
+   Inside: `acl2` starts ACL2, and every book in the image's certified
+   set can be included immediately, e.g.
+   `(include-book "kestrel/axe/top" :dir :system)`.  The STP solver (for
+   Axe) and Z3 (for Smtlink) are installed and configured.
+
+4. To certify a NEW book, use `cert.pl my-book` (from the directory
+   containing it).  If the book uses Axe's STP tools (`defthm-stp`,
+   `prove-with-stp`, ...), first create `my-book.acl2` next to it
+   containing:
+
+   ```
+   ; cert-flags: ? t :ttags :all :skip-proofs-okp t
+   ```
+
+   (ttags because Axe's solver interface carries trust tags;
+   skip-proofs-okp because STP-backed events are recorded that way.)
+
+5. Sanity checks that should all succeed: `stp --version` and
+   `z3 --version` in the container; a small `defthm-stp` proof; and
+   `find books -name '*.cert' | wc -l` reporting thousands of books.
+````
 
 Notes: the sandbox typically has few cores and modest RAM, which is fine
 for interactive proof development and certifying small books, but not for
@@ -212,55 +214,57 @@ the dependency-free client shipped in the acl2-mcp repository.
 
 **Paste this to the Claude session after the image setup above:**
 
-> Please also set up the acl2-mcp server so ACL2 interactions keep a
-> persistent session, as follows.
->
-> 1. Run the image as a persistent container and install the server in it
->    (host networking so pip can reach PyPI; the sandbox intercepts TLS
->    with its own CA, which the container must be told to trust):
->
->    ```bash
->    git clone https://github.com/bendyarm/acl2-mcp
->    docker run -d --name acl2dev --network=host \
->      -v "$PWD/acl2-mcp":/opt/acl2-mcp -v "$PWD":/work \
->      ghcr.io/kestrelinstitute/acl2-allcerts:latest sleep infinity
->    for f in /usr/local/share/ca-certificates/*.crt; do
->      docker cp "$f" acl2dev:/usr/local/share/ca-certificates/
->    done
->    docker exec acl2dev bash -c \
->      'update-ca-certificates && python3 -m venv /root/.venvs/mcp \
->       && /root/.venvs/mcp/bin/pip install --quiet /opt/acl2-mcp'
->    ```
->
-> 2. Verify with the client's self-test (it starts a session, evaluates
->    `(+ 1 2)`, and ends the session):
->
->    ```bash
->    python3 acl2-mcp/for-agents/mcp_stdio_client.py \
->      docker exec -i acl2dev /root/.venvs/mcp/bin/acl2-mcp
->    ```
->
-> 3. Then drive ACL2 from your own Python using that client.  IMPORTANT:
->    sessions live inside the server process, so create ONE `MCP` instance
->    and keep it alive for the whole interaction (e.g. run a long-lived
->    driver script, or structure work as one script per proof task):
->
->    ```python
->    import sys; sys.path.insert(0, "acl2-mcp/for-agents")
->    from mcp_stdio_client import MCP
->    m = MCP(["docker", "exec", "-i", "acl2dev", "/root/.venvs/mcp/bin/acl2-mcp"])
->    m.initialize()
->    sid = m.start_session()
->    print(m.call("evaluate", {"code": '(include-book "kestrel/axe/top" :dir :system)',
->                              "session_id": sid}))
->    print(m.call("evaluate", {"code": "(defthm ...)", "session_id": sid}))
->    ```
->
->    The most useful tools: `evaluate` (anything you would type at the
->    ACL2 prompt, including `:pe`, `:pbt`, `:doc`), `undo`,
->    `certify_book` (cert.pl-backed), `admit` (try an event without
->    committing it), and `end_session`.  Books already certified in the
->    image include instantly inside a session.
+````text
+Please also set up the acl2-mcp server so ACL2 interactions keep a
+persistent session, as follows.
+
+1. Run the image as a persistent container and install the server in it
+   (host networking so pip can reach PyPI; the sandbox intercepts TLS
+   with its own CA, which the container must be told to trust):
+
+   ```bash
+   git clone https://github.com/bendyarm/acl2-mcp
+   docker run -d --name acl2dev --network=host \
+     -v "$PWD/acl2-mcp":/opt/acl2-mcp -v "$PWD":/work \
+     ghcr.io/kestrelinstitute/acl2-allcerts:latest sleep infinity
+   for f in /usr/local/share/ca-certificates/*.crt; do
+     docker cp "$f" acl2dev:/usr/local/share/ca-certificates/
+   done
+   docker exec acl2dev bash -c \
+     'update-ca-certificates && python3 -m venv /root/.venvs/mcp \
+      && /root/.venvs/mcp/bin/pip install --quiet /opt/acl2-mcp'
+   ```
+
+2. Verify with the client's self-test (it starts a session, evaluates
+   `(+ 1 2)`, and ends the session):
+
+   ```bash
+   python3 acl2-mcp/for-agents/mcp_stdio_client.py \
+     docker exec -i acl2dev /root/.venvs/mcp/bin/acl2-mcp
+   ```
+
+3. Then drive ACL2 from your own Python using that client.  IMPORTANT:
+   sessions live inside the server process, so create ONE `MCP` instance
+   and keep it alive for the whole interaction (e.g. run a long-lived
+   driver script, or structure work as one script per proof task):
+
+   ```python
+   import sys; sys.path.insert(0, "acl2-mcp/for-agents")
+   from mcp_stdio_client import MCP
+   m = MCP(["docker", "exec", "-i", "acl2dev", "/root/.venvs/mcp/bin/acl2-mcp"])
+   m.initialize()
+   sid = m.start_session()
+   print(m.call("evaluate", {"code": '(include-book "kestrel/axe/top" :dir :system)',
+                             "session_id": sid}))
+   print(m.call("evaluate", {"code": "(defthm ...)", "session_id": sid}))
+   ```
+
+   The most useful tools: `evaluate` (anything you would type at the
+   ACL2 prompt, including `:pe`, `:pbt`, `:doc`), `undo`,
+   `certify_book` (cert.pl-backed), `admit` (try an event without
+   committing it), and `end_session`.  Books already certified in the
+   image include instantly inside a session.
+````
 
 ---
 
