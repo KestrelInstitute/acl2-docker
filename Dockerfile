@@ -383,6 +383,11 @@ RUN z3 --version && \
 #   image -- including the allcerts stage certifying the non-kestrel books
 #   on top of kcerts -- fails with missing-package errors without them.
 #   They are small; the space win from deleting them is negligible anyway.
+# - .acl2x files (two-pass certification) and @expansion.lsp files are
+#   KEPT for the same kind of reason: they are targets/dependencies in
+#   cert.pl's dependency graph, so if they are missing, any later cert.pl
+#   run whose dependency tree touches a two-pass book spends time
+#   regenerating them, even when nothing actually needs recertification.
 # - .cert.out files of successful books were already removed during the run
 #   by CERT_PL_RM_OUTFILES; failed books keep theirs, which is how the
 #   failure report below identifies them.
@@ -398,9 +403,9 @@ if "$@" 2>&1 | tee /tmp/certify.log ; then
   echo "Removing certification artifacts not needed by include-book..."
   find . -type f \( -name '*.cert.out' -o -name '*.acl2x.out' \
        -o -name '*.pcert0.out' -o -name '*.pcert1.out' \
-       -o -name '*.cert.time' -o -name '*.acl2x' \
+       -o -name '*.cert.time' \
        -o -name '*.pcert0' -o -name '*.pcert1' \
-       -o -name '*@expansion.lsp' -o -name 'workxxx*' \) -delete
+       -o -name 'workxxx*' \) -delete
   rm -f /tmp/certify.log
   echo "Final books directory size:"
   du -sh .

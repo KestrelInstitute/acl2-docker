@@ -173,11 +173,13 @@ GitHub's ARM64 runners use Ampere/Neoverse CPUs that don't support floating-poin
   points at the venv's Python by absolute path and is written before
   certification, so the certified Smtlink books have it baked in.
 - Certification artifacts that are no longer needed are removed:
-  `.cert.out`, `.cert.time`, `.acl2x`, `.pcert0`/`.pcert1`, `@expansion.lsp`,
-  and `workxxx` files. What remains for each book: the source, its `.cert`
-  file, its compiled `.fasl` file, and its `.port` file (kept because
-  cert.pl loads the `.port` files of included books when certifying new
-  books on top of the ones in the image).
+  `.cert.out`, `.cert.time`, `.pcert0`/`.pcert1`, and `workxxx` files.
+  What remains for each book: the source, its `.cert` file, its compiled
+  `.fasl` file, its `.port` file, and (for two-pass books) its `.acl2x`
+  and `@expansion.lsp` files — the build-system files are kept because
+  cert.pl needs them when certifying new books on top of the ones in the
+  image (it loads included books' `.port` files, and regenerates missing
+  `.acl2x` files it considers dependencies).
 
 ### Build Attestation
 
