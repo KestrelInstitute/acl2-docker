@@ -406,6 +406,14 @@ if "$@" 2>&1 | tee /tmp/certify.log ; then
        -o -name '*.cert.time' \
        -o -name '*.pcert0' -o -name '*.pcert1' \
        -o -name 'workxxx*' \) -delete
+  # The manual build (doc/top, allcerts only) also creates
+  # doc/manual/download/: website-distribution archives of the manual
+  # directory that sits right next to them.  Worse, since this image lacks
+  # the 'zip' binary, xdoc/fancy/zip.sh (set -e) dies at its zip step,
+  # AFTER creating its staging copy download/manual/ and BEFORE its
+  # cleanup 'rm -rf manual' -- stranding a full extra copy of the manual
+  # (~541 MB total observed).  None of it is useful inside the image.
+  rm -rf doc/manual/download
   rm -f /tmp/certify.log
   echo "Final books directory size:"
   du -sh .
@@ -464,3 +472,14 @@ ARG CERT_JOBS=
 RUN J="${CERT_JOBS:-$(nproc)}" && \
     echo "Certifying the full regression suite with -j${J}..." && \
     certify-books-and-clean make -j"${J}" regression ACL2="${ACL2}"
+
+# ---- Agent documentation corpus ----
+# Convert the built manual (a byproduct of certifying doc/top above) into
+# the agent-friendly corpus: one markdown-flavored text file per xdoc
+# topic, plus a grep-able index.  See tools/DESIGN.md and tools/PLAN.md.
+# This is a separate (cacheable) RUN: it only adds files, so same-layer
+# placement with the regression is not needed.  ~90 s, ~0.4 GB.
+# (.dockerignore admits exactly this one file into the build context.)
+COPY tools/xdoc_extract.py /usr/local/bin/xdoc_extract.py
+RUN python3 /usr/local/bin/xdoc_extract.py books/doc/manual books/doc/agent-corpus && \
+    ls -la books/doc/agent-corpus && du -sh books/doc/agent-corpus

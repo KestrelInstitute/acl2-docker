@@ -149,11 +149,15 @@ answers "is there something for X?" in ~12 ms.  Sorted by natural name.
   fidelity upgrade that would not change this format contract.
 - **In-session `(include-book "doc/top")` as the lookup path**: measured
   at ~57 s ACL2 time / ~3.0 GB RSS on 2 cores.  Viable as a *separate*
-  warm "doc session" (authoritative, includes preprocessor rendering, and
-  enables :pe/:props over the whole world), but never in the working
-  session (world pollution changes proof behavior), unavailable in
-  kcerts, and unavailable before ACL2 starts.  Complementary, not
-  competing; see PLAN.md.
+  warm "doc session" (authoritative, and interactively-defined topics
+  with documentation become immediately :doc-able), but never in the
+  working session (world pollution changes proof behavior), unavailable
+  in kcerts, and unavailable before ACL2 starts.  Also note the doc/top
+  world is *documentation-shaped, not definition-shaped*: some libraries
+  contribute doc-only books, so a symbol can be documented there yet
+  undefined (verified: `bvplus` has a topic but no function in that
+  world) — the doc session can describe such symbols but cannot evaluate
+  or prove with them.  Complementary, not competing; see PLAN.md.
 - **Aggressive math simplification** (e.g. `\frac{a}{b}` → `a/b`):
   rejected as lossy/ambiguous; LaTeX source is agent-legible as-is.
 

@@ -119,6 +119,16 @@ Notes:
 - **`CERT_PL_RM_OUTFILES=1`** is set in the image, so books you certify
   yourself also have their `.cert.out` deleted on success (failures keep
   theirs, for debugging).  `unset CERT_PL_RM_OUTFILES` to change that.
+- **Agent documentation corpus** (allcerts only): the image contains
+  `books/doc/agent-corpus/` — the full xdoc manual converted to one
+  plain-text file per topic plus a grep-able `index.tsv`, designed for
+  AI agents (and handy for humans): `grep -i 'tail recursion'
+  books/doc/agent-corpus/index.tsv` finds topics in milliseconds; see
+  `AGENT-README.md` in that directory.  The same corpus is published as
+  a small tarball on the
+  [xdoc-corpus release](https://github.com/KestrelInstitute/acl2-docker/releases/tag/xdoc-corpus)
+  for use outside this image (kcerts sessions, air-gapped environments).
+  See `tools/DESIGN.md` for how it is built.
 - **Updating ACL2 inside these images** (git pull + `make update`) is possible
   but rarely useful: previously certified books become stale with respect to
   the new executable.  Prefer pulling a newer image build.
