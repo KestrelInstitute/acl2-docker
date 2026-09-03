@@ -5,19 +5,19 @@
 # This file has three final build targets, selected with --target:
 #
 #   runtime    - Lean image: SBCL + ACL2 + books as source (not certified).
-#                Built for linux/amd64 and linux/arm64 by
-#                .github/workflows/docker-multiplatform-selfhosted.yml
+#                Built for linux/amd64 and linux/arm64 by the
+#                multi-platform workflow in KestrelInstitute/acl2-docker-ci
 #
 #   kcerts     - Medium image: everything in 'runtime', plus the
 #                STP and Z3 solvers, with all the books reachable from
 #                kestrel/top certified.
-#                Built for linux/amd64 and linux/arm64 by
-#                .github/workflows/docker-kcerts-selfhosted.yml
+#                Built for linux/amd64 and linux/arm64 by the
+#                kcerts workflow in KestrelInstitute/acl2-docker-ci
 #
 #   allcerts   - Large linux/amd64 image: everything in 'kcerts', plus the
 #                rest of the books of the standard "make regression" suite
-#                certified.  Built by
-#                .github/workflows/docker-allcerts-selfhosted.yml
+#                certified.  Built by the allcerts workflow in
+#                KestrelInstitute/acl2-docker-ci
 #
 # ('kcerts' builds on the intermediate 'cert-base' stage, which adds the
 # solvers and a common certify-and-clean script, and 'allcerts' builds on

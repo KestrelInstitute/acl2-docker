@@ -1,96 +1,61 @@
-# ACL2 Docker Build Infrastructure
+# ACL2 Docker Images
 
-**This page is about how to build Docker images with ACL2.**  
-**If you are looking for how to install and run a Docker image that contains ACL2, please go to the [INSTALL.md](INSTALL.md) page.**
+Prebuilt Docker images of the [ACL2](https://www.cs.utexas.edu/~moore/acl2/)
+theorem prover on SBCL, published to the GitHub Container Registry in three
+packages.
 
----
+**To install and run an image, go to [INSTALL.md](INSTALL.md).**
 
-## About This Repository
+This page describes what the images contain, how they are tagged, and how
+they are built, for anyone who wants to build ACL2 images themselves.
 
-This repository contains build infrastructure for creating ACL2 Docker images. It includes:
+## This Repository
 
-- `Dockerfile` - Multi-stage build that compiles SBCL and ACL2 from source, with three build targets (`runtime`, `kcerts`, and `allcerts`)
-- Three GitHub Actions workflows for automated builds (see below)
-- Build provenance attestation for supply chain security, in the case of GitHub-hosted builds
+- `Dockerfile` — a multi-stage build that compiles SBCL and ACL2 from source,
+  with three build targets: `runtime`, `kcerts`, and `allcerts`.
+- `INSTALL.md` — installing and running the images, including from Claude
+  cloud sessions.
+- `tools/` — the extractor that turns the built xdoc manual into the
+  agent-friendly documentation corpus shipped in the `allcerts` image (see
+  [tools/DESIGN.md](tools/DESIGN.md)).
+
+The official images are built by GitHub Actions workflows that live in a
+private companion repository, `KestrelInstitute/acl2-docker-ci`; see "How the
+official images are built" below.
 
 ## The Three Images
 
-| Image | Platforms | Contents | Workflow |
-|-------|-----------|----------|----------|
-| `ghcr.io/kestrelinstitute/acl2` | linux/amd64 + linux/arm64 | SBCL + ACL2 + books as source (not certified) | `docker-multiplatform-selfhosted.yml` |
-| `ghcr.io/kestrelinstitute/acl2-kcerts` | linux/amd64 + linux/arm64 | Everything in the lean image, **plus all books reachable from `kestrel/top` certified**, plus the **STP** solver (for Axe) and **Z3** (for Smtlink) | `docker-kcerts-selfhosted.yml` |
-| `ghcr.io/kestrelinstitute/acl2-allcerts` | linux/amd64 only | Everything in the lean image, **plus all books of the standard `make regression` suite certified**, plus **STP** and **Z3** | `docker-allcerts-selfhosted.yml` |
+| Image | Platforms | Contents |
+|-------|-----------|----------|
+| `ghcr.io/kestrelinstitute/acl2` | linux/amd64 + linux/arm64 | SBCL + ACL2 + books as source (not certified) |
+| `ghcr.io/kestrelinstitute/acl2-kcerts` | linux/amd64 + linux/arm64 | Everything in the lean image, **plus all books reachable from `kestrel/top` certified**, plus the **STP** solver (for Axe) and **Z3** (for Smtlink) |
+| `ghcr.io/kestrelinstitute/acl2-allcerts` | linux/amd64 only | Everything in the lean image, **plus all books of the standard `make regression` suite certified**, plus **STP** and **Z3**, plus the xdoc agent corpus |
 
 All three use the same Dockerfile: the lean image is the `runtime` build
 target, `kcerts` extends `runtime` (via a `cert-base` stage that adds the
 solvers), and `allcerts` extends `kcerts` — its regression skips the
 already-certified kestrel books and certifies the rest.  Because of that
 layering, an allcerts build produces the linux/amd64 kcerts image along the
-way (and pushes it, as `acl2-kcerts:<tag>-amd64`), the two images with certified books
-share their kestrel layers, and pulling both costs little more than pulling
-allcerts alone.  The images with certified books are much larger than the lean one
-because they contain the `.cert` files and compiled books for their
-respective book sets; artifacts not needed by `include-book` (such as
-`.cert.out` files) are removed during the build.
-
-### Where the builds run
-
-| Job | Runner | Notes |
-|-----|--------|-------|
-| Lean amd64 | GitHub-hosted | With SLSA attestation |
-| Lean arm64 | Self-hosted Apple Silicon Mac | See [RUNNER-SETUP-MACOS-ARM64.md](RUNNER-SETUP-MACOS-ARM64.md) |
-| kcerts amd64 | Self-hosted Ubuntu x86-64 server | See [RUNNER-SETUP-UBUNTU-AMD64.md](RUNNER-SETUP-UBUNTU-AMD64.md) |
-| kcerts arm64 | Self-hosted Apple Silicon Mac | Same runner as lean arm64 |
-| allcerts amd64 | Self-hosted Ubuntu x86-64 server | Same runner as kcerts amd64 |
-
-## Building Images
-
-Images are built via GitHub Actions workflow dispatch. Only repository maintainers (users with write access) can trigger builds.
-
-Before you dispatch:
-
-- **Multi-platform (lean) workflow**: the self-hosted ARM64 Mac runner must be online, with Docker Desktop running.
-- **kcerts workflow**: BOTH self-hosted runners must be online (the Ubuntu x86-64 runner with Docker Engine, and the ARM64 Mac with Docker Desktop). Each certifies the kestrel/top book set for its architecture.
-- **allcerts workflow**: the self-hosted Ubuntu x86-64 runner must be online, with Docker Engine running. This build runs a full book regression, so expect it to take on the order of an hour on a large server (much longer on a small machine or with a cold Docker cache).
-
-You can dispatch a workflow two ways:
-
-- **Web UI** — Go to the Actions tab and select the workflow
-  ([multi-platform](https://github.com/KestrelInstitute/acl2-docker/actions/workflows/docker-multiplatform-selfhosted.yml),
-  [kcerts](https://github.com/KestrelInstitute/acl2-docker/actions/workflows/docker-kcerts-selfhosted.yml),
-  or
-  [allcerts](https://github.com/KestrelInstitute/acl2-docker/actions/workflows/docker-allcerts-selfhosted.yml)).
-  Click the **"Run workflow"** button on the right side of the banner above the runs list. A small form appears with the inputs described in "Workflow Inputs" below. Fill it in and click the green **"Run workflow"** button at the bottom of the form to start the build.
-- **`gh` CLI** — Use `gh workflow run <workflow-file>` with `-f name=value` flags for inputs. See "Example Commands" below.
-
-### Workflow Inputs
-
-| Input | Workflows | Description |
-|-------|-----------|-------------|
-| `Use workflow from` | both | The branch/tag/SHA of *this* (`acl2-docker`) repo whose workflow definition to run. Default: `Branch: main`. Leave as-is unless you are testing workflow changes on a different branch. Note: this selects the *workflow* version, not the ACL2 version. |
-| `ACL2 ref/commit to build` | both | Usually left blank (builds latest master). Enter a commit hash/branch/tag for a specific version. |
-| `Extra tag` | both | Usually left blank. The `latest` tag is added automatically for master builds. |
-| `Parallel certification jobs` | kcerts, allcerts | Usually left blank (uses all cores on the runner). Set lower if a runner's RAM is limited (rule of thumb: jobs ≈ RAM / 4 GB). For kcerts, the same value applies on both runners. |
-| `Push to registry?` | both | Defaults to checked. Uncheck to test build without pushing. |
+way (and pushes it, as `acl2-kcerts:<tag>-amd64`), the two images with
+certified books share their kestrel layers, and pulling both costs little
+more than pulling allcerts alone.  The images with certified books are much
+larger than the lean one because they contain the `.cert` files and compiled
+books for their respective book sets; artifacts not needed by `include-book`
+(such as `.cert.out` files) are removed during the build.
 
 ### Image Tagging
 
 All images use the same tagging scheme (in their respective packages):
 
-- **Empty input (default)**: Builds latest master → tagged `master-abc1234` AND `latest`
+- **Master build (the default)**: tagged `master-abc1234` AND `latest`
   - Git is set up for easy updates: `git pull origin master`
   - The `latest` tag always points to the most recent master build
-- **Specific ref**: Builds that commit → tagged `commit-abc1234` only
+- **Specific ref**: tagged `commit-abc1234` only
   - Git is in detached HEAD mode (see INSTALL.md for updating)
 
 The kcerts package additionally holds per-architecture tags
 (`master-abc1234-amd64`, `master-abc1234-arm64`); these are the carriers
 from which the multi-platform manifest is assembled and can be ignored.
-(The `-amd64` one is also pushed by the allcerts workflow, since the
-allcerts build passes through the kcerts stage.  A useful dispatch order
-for a given commit is therefore: allcerts first, then kcerts — the kcerts
-amd64 job will hit the Ubuntu runner's Docker cache, leaving only the Mac's
-arm64 build and the manifest as new work.)
 
 ### Builds are Strict
 
@@ -99,61 +64,100 @@ is pushed**. Certification runs with keep-going (`make -k` /
 `cert.pl --keep-going`), so all failing books are reported in one run: the
 end of the build log lists them (under "CERTIFICATION FAILED"), and details
 for each appear earlier in the log. ACL2 `master` is usually kept green, so
-failures should be rare; re-run later or pass a known-good `acl2_ref`.
+failures should be rare.
 
-### Example Commands
+### The xdoc Corpus Release
+
+Each allcerts build also publishes the agent-friendly documentation corpus
+from the image (`books/doc/agent-corpus/`) as the
+[xdoc-corpus release](https://github.com/KestrelInstitute/acl2-docker/releases/tag/xdoc-corpus)
+of this repository, both under a commit-stamped name and as
+`xdoc-corpus-latest.tar.zst`, for environments that cannot pull the image.
+See [tools/DESIGN.md](tools/DESIGN.md).
+
+## Building the Images Yourself
+
+The Dockerfile is self-contained; a local build needs only Docker.  Pick a
+target explicitly — `allcerts` is the last stage, so a plain `docker build .`
+runs the full regression:
 
 ```bash
-# Lean multi-platform image, latest master (recommended)
-gh workflow run docker-multiplatform-selfhosted.yml \
-  -f push_to_registry=true
+# Lean image, latest ACL2 master
+docker build --target runtime -t acl2 .
 
-# Lean multi-platform image, specific commit
-gh workflow run docker-multiplatform-selfhosted.yml \
-  -f acl2_ref=abc1234def5678 \
-  -f push_to_registry=true
+# Lean image, a specific ACL2 commit (detached HEAD inside the image)
+docker build --target runtime \
+  --build-arg ACL2_COMMIT=abc1234def5678 --build-arg ACL2_BUILD_TYPE=commit \
+  -t acl2 .
 
-# kcerts image (kestrel/top books certified, both platforms), latest master
-gh workflow run docker-kcerts-selfhosted.yml \
-  -f push_to_registry=true
+# kcerts: kestrel/top certified, with STP and Z3
+docker build --target kcerts --build-arg CERT_JOBS=8 -t acl2-kcerts .
 
-# allcerts image (full regression certified, amd64), latest master
-gh workflow run docker-allcerts-selfhosted.yml \
-  -f push_to_registry=true
-
-# allcerts image, limiting parallelism (e.g. runner has 128 cores but 256 GB RAM is shared)
-gh workflow run docker-allcerts-selfhosted.yml \
-  -f cert_jobs=32 \
-  -f push_to_registry=true
+# allcerts: the full regression suite certified
+docker build --target allcerts --build-arg CERT_JOBS=8 -t acl2-allcerts .
 ```
 
-## Self-Hosted Runners
+Build arguments (all have defaults in the Dockerfile):
 
-Two different self-hosted runners are used:
+| Argument | Meaning |
+|----------|---------|
+| `ACL2_COMMIT` | ACL2 commit, tag, or branch to build (default `master`) |
+| `ACL2_BUILD_TYPE` | `master` (branch set up for `git pull`) or `commit` (detached HEAD) |
+| `CERT_JOBS` | Parallel certification jobs for `kcerts`/`allcerts` (default: all cores) |
+| `SBCL_VERSION`, `SBCL_SHA256` | SBCL release to build; change both together |
+| `STP_VERSION`, `MINISAT_COMMIT` | STP release and its minisat dependency (`kcerts`/`allcerts`) |
+| `Z3_SOLVER_VERSION` | `z3-solver` PyPI package, which provides both `z3` and the Python bindings Smtlink uses |
 
-- **ARM64 (Apple Silicon Mac)** — used by the `build-arm64` job of the
-  multi-platform workflow and the `build-kcerts-arm64` job of the kcerts
-  workflow. GitHub-hosted ARM64 runners cannot build ACL2
-  (see "Why Self-Hosted Runner for ARM64?" below). Setup:
-  [RUNNER-SETUP-MACOS-ARM64.md](RUNNER-SETUP-MACOS-ARM64.md). Runner labels:
-  `self-hosted, macOS, ARM64`.
-- **x86-64 (Ubuntu server)** — used by the `build-kcerts-amd64` job of the
-  kcerts workflow and the `build-allcerts` job of the allcerts workflow. A
-  large book certification needs far more time, RAM, and disk than
-  GitHub-hosted runners provide. Setup:
-  [RUNNER-SETUP-UBUNTU-AMD64.md](RUNNER-SETUP-UBUNTU-AMD64.md). Runner
-  labels: `self-hosted, Linux, X64`.
+Resource needs:
 
-The label sets are disjoint, so the workflows can never pick up each other's
-runners. In both cases, registration is: visit the repo's Settings → Actions
-→ Runners → "New self-hosted runner" page (as an admin), run the generated
-commands on the machine, and accept the default labels.
+- **Memory.** Book certification needs roughly 4 GB per parallel job; set
+  `CERT_JOBS` to about RAM / 4 GB if the default (all cores) would exceed
+  that.  On macOS, give Docker Desktop plenty of memory (32 GB recommended
+  for `kcerts`).
+- **Time.** The lean image builds in minutes.  On a 32-core, 128 GB server,
+  `kcerts` certification takes about 35 minutes and the `allcerts`
+  regression a further 55 minutes; smaller machines take proportionally
+  longer.
+- **arm64 needs Apple Silicon.** See "Why Apple Silicon for ARM64?" below.
+  On a Mac, `docker build` produces a native linux/arm64 image.
+
+## How the Official Images are Built
+
+Each image has a GitHub Actions workflow that is triggered by hand
+(`workflow_dispatch` only), takes an ACL2 ref and a parallelism setting as
+inputs, builds the corresponding Dockerfile target, and pushes it under the
+tags described above.  The jobs run on:
+
+| Job | Runner |
+|-----|--------|
+| Lean amd64 | GitHub-hosted |
+| Lean arm64 | Self-hosted Apple Silicon Mac |
+| kcerts amd64 | Self-hosted Ubuntu x86-64 server |
+| kcerts arm64 | Self-hosted Apple Silicon Mac |
+| allcerts amd64 | Self-hosted Ubuntu x86-64 server |
+
+The workflows live in the private repository `KestrelInstitute/acl2-docker-ci`
+rather than here.  They check out this repository's Dockerfile at a chosen
+ref and build from it, so this repository remains the complete description
+of the images.  Two reasons for the split: GitHub advises against attaching
+self-hosted runners to public repositories, and the Actions logs of a public
+repository are readable by any GitHub user and reveal details of the
+self-hosted machines (hostname, OS, kernel, file-system paths).  Kestrel
+staff who need to trigger a build or set up a runner should look there.
+
+The images are not signed with GitHub artifact attestations: that feature is
+available only to public repositories, and the self-hosted builds could
+never have it in any case.  To pin an image, use its digest (see "Verifying
+Image Authenticity" in INSTALL.md).
 
 ## Technical Details
 
-### Why Self-Hosted Runner for ARM64?
+### Why Apple Silicon for ARM64?
 
-GitHub's ARM64 runners use Ampere/Neoverse CPUs that don't support floating-point exception traps - an optional hardware limitation per the ARM specification. ACL2 requires FP traps for proper error handling. Apple Silicon supports FP traps, so we use a self-hosted Mac runner for ARM64 builds.
+GitHub's ARM64 runners use Ampere/Neoverse CPUs that don't support
+floating-point exception traps — an optional feature per the ARM
+specification. ACL2 requires FP traps for proper error handling. Apple
+Silicon supports FP traps, so ARM64 images are built on a self-hosted Mac.
 
 ### What's in the images kcerts and allcerts
 
@@ -180,16 +184,6 @@ GitHub's ARM64 runners use Ampere/Neoverse CPUs that don't support floating-poin
   cert.pl needs them when certifying new books on top of the ones in the
   image (it loads included books' `.port` files, and regenerates missing
   `.acl2x` files it considers dependencies).
-
-### Build Attestation
-
-The lean amd64 image includes SLSA Level 2+ build provenance attestation, verifiable with:
-
-```bash
-gh attestation verify oci://ghcr.io/kestrelinstitute/acl2:latest --owner KestrelInstitute
-```
-
-The ARM64 image and the kcerts/allcerts images are built on self-hosted runners and do not have attestation.
 
 ## License
 

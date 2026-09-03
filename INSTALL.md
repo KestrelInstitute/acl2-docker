@@ -311,13 +311,25 @@ same tagging scheme:
 
 ### Verifying Image Authenticity
 
-The amd64 image of the lean `acl2` package includes build provenance attestation.  You can view attestation status on the [GitHub package page](https://github.com/orgs/KestrelInstitute/packages/container/package/acl2).  (The arm64 image and the `acl2-kcerts` and `acl2-allcerts` packages are built on self-hosted runners and do not have attestation.)
-
-Alternatively, if you have the GitHub CLI, you can do this:
+The images carry no build attestation: they are built on Kestrel's own
+machines, and GitHub's artifact attestations are not available for such
+builds.  To make sure you run exactly the image you examined, pin it by
+digest rather than by tag.  The digest of a tag is shown on the package
+page and by:
 
 ```bash
-gh attestation verify oci://ghcr.io/kestrelinstitute/acl2:latest --owner KestrelInstitute
+docker buildx imagetools inspect ghcr.io/kestrelinstitute/acl2:latest
 ```
+
+Then pull by digest:
+
+```bash
+docker pull ghcr.io/kestrelinstitute/acl2@sha256:<digest>
+```
+
+The ACL2 commit an image was built from is recorded in its
+`org.opencontainers.image.revision` label; see "Checking Image Version"
+below.
 
 ---
 
