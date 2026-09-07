@@ -174,6 +174,17 @@ sudo ./svc.sh uninstall  # only to remove the systemd service entirely
 See [GitHub: Configuring the self-hosted runner application as a
 service](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/configuring-the-self-hosted-runner-application-as-a-service).
 
+### The runner must be listening when you dispatch
+
+Unless you set the runner up as a service, it is not listening by default —
+someone has to start it.  A job dispatched while its runner is offline does
+not fail: it sits as "Queued" for up to 24 hours and is then cancelled by
+GitHub.  So if a dispatched workflow seems to hang at "Queued", check that
+the runner shows "Listening for Jobs" (foreground) or that the service is
+running, and check the runner's status on the repository's
+Settings → Actions → Runners page ("Idle" means listening; "Offline" means
+it is not).
+
 ## Step 4: Test the workflow
 
 With the runner listening, trigger a **test build without pushing**:
