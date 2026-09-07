@@ -18,6 +18,10 @@ they are built, for anyone who wants to build ACL2 images themselves.
 - `tools/` — the extractor that turns the built xdoc manual into the
   agent-friendly documentation corpus shipped in the `allcerts` image (see
   [tools/DESIGN.md](tools/DESIGN.md)).
+- `examples/` — snapshots of the GitHub Actions workflows that build the
+  official images, plus the self-hosted runner setup guides they rely on.
+  These are reference material, not active workflows; see "Example
+  workflows" below.
 
 The official images are built by GitHub Actions workflows that live in a
 private companion repository, `KestrelInstitute/acl2-docker-ci`; see "How the
@@ -144,6 +148,22 @@ self-hosted runners to public repositories, and the Actions logs of a public
 repository are readable by any GitHub user and reveal details of the
 self-hosted machines (hostname, OS, kernel, file-system paths).  Kestrel
 staff who need to trigger a build or set up a runner should look there.
+
+### Example workflows
+
+Snapshots of the three workflows are kept in
+[examples/workflows/](examples/workflows/) as examples of what someone
+else could set up — for instance, to build and publish these images for
+their own organization.  They sit outside `.github/workflows/`, so GitHub
+never runs them from this repository; each file's header comment explains
+what to adapt (runner labels, registry organization).  The accompanying
+runner setup guides,
+[examples/RUNNER-SETUP-UBUNTU-AMD64.md](examples/RUNNER-SETUP-UBUNTU-AMD64.md)
+and
+[examples/RUNNER-SETUP-MACOS-ARM64.md](examples/RUNNER-SETUP-MACOS-ARM64.md),
+describe how the self-hosted runners those workflows target were
+configured.  The snapshots track the private CI repository loosely — the
+live workflows there may drift ahead of these copies.
 
 The images are not signed with GitHub artifact attestations: that feature is
 available only to public repositories, and the self-hosted builds could
