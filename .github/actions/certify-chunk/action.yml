@@ -1,0 +1,59 @@
+name: Certify one chunk
+description: >
+  Pull the run's checkpoint image, run tools/certify-chunk.sh in it under a
+  time budget, commit the container back to the checkpoint tag, and push it.
+  Used by the experimental arm64 allcerts workflows; the caller must already
+  be logged in to ghcr.io.
+
+inputs:
+  image:
+    description: Image repository (e.g. ghcr.io/kestrelinstitute/acl2-kcerts-nightly)
+    required: true
+  ckpt-tag:
+    description: Checkpoint tag to pull, update, and push (e.g. ckpt-12345)
+    required: true
+  chunk-minutes:
+    description: Time budget for this chunk, in minutes
+    required: true
+  cert-jobs:
+    description: Parallel certification jobs (-j)
+    required: true
+  book-target:
+    description: What to certify — 'regression' (full suite) or 'kestrel' (kestrel/top)
+    required: false
+    default: regression
+
+outputs:
+  status:
+    description: done | continue | failed | error
+    value: ${{ steps.run.outputs.status }}
+  cpu-seconds:
+    description: Book-certification CPU seconds performed by this chunk
+    value: ${{ steps.run.outputs.cpu }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run certification chunk
+      id: run
+      shell: bash
+      run: |
+        set -eu
+        img="${{ inputs.image }}:${{ inputs.ckpt-tag }}"
+        docker pull "${img}"
+        df -h /
+        budget=$(( ${{ inputs.chunk-minutes }} * 60 ))
+        # The chunk script always exits 0; its verdict is /root/chunk-status.
+        docker run --name work \
+          -v "${GITHUB_WORKSPACE}/tools/certify-chunk.sh:/usr/local/bin/certify-chunk:ro" \
+          "${img}" \
+          bash /usr/local/bin/certify-chunk "${budget}" "${{ inputs.cert-jobs }}" "${{ inputs.book-target }}"
+        status=$(docker cp work:/root/chunk-status - | tar -xO)
+        cpu=$(docker cp work:/root/chunk-cpu - | tar -xO)
+        echo "status=${status}" >> "$GITHUB_OUTPUT"
+        echo "cpu=${cpu}" >> "$GITHUB_OUTPUT"
+        echo "Committing checkpoint (status: ${status})..."
+        docker commit work "${img}"
+        docker rm work
+        docker push "${img}"
+        df -h /

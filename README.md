@@ -22,6 +22,8 @@ they are built, for anyone who wants to build ACL2 images themselves.
   official images, plus the self-hosted runner setup guides they rely on.
   These are reference material, not active workflows; see "Example
   workflows" below.
+- `.github/workflows/` — a nightly build that runs entirely on GitHub-hosted
+  runners (see "Nightly GitHub-hosted kcerts build" below).
 
 The official images are built by GitHub Actions workflows that live in a
 private companion repository, `KestrelInstitute/acl2-docker-ci`; see "How the
@@ -164,6 +166,27 @@ and
 describe how the self-hosted runners those workflows target were
 configured.  The snapshots track the private CI repository loosely — the
 live workflows there may drift ahead of these copies.
+
+### Nightly GitHub-hosted kcerts build
+
+`nightly-kcerts-amd64.yml` runs every night (00:17 Pacific standard time):
+it builds SBCL + ACL2 master and certifies the kestrel/top book set — the
+kcerts image contents — entirely on GitHub's free public amd64 runners
+(4 vCPUs, 16 GB RAM), pushing to the separate `acl2-kcerts-nightly`
+package as `master-<sha>` and `latest`.  On nights when ACL2 master has
+not changed, the build is skipped.
+
+Because certification can exceed GitHub's 6-hour-per-job limit, the build
+uses a reusable chunked workflow (`allcerts-chunked.yml`): a base job
+builds the Dockerfile's `cert-base` target and pushes it to ghcr as a
+checkpoint; certification jobs then run in a chain, each certifying under
+a time budget (`tools/certify-chunk.sh`), docker-committing the container,
+and pushing it back as the checkpoint the next job resumes from
+(make/cert.pl skip already-certified books).  For the kestrel book set
+(measured at 6.25 CPU-hours on a fast server) one chunk normally
+suffices.  A failed certification fails the run loudly and publishes
+nothing but the checkpoint, so the nightly doubles as a canary for ACL2
+master + the kestrel books on a plain public toolchain.
 
 The images are not signed with GitHub artifact attestations: that feature is
 available only to public repositories, and the self-hosted builds could

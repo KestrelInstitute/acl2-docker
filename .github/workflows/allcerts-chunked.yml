@@ -1,0 +1,317 @@
+# Reusable chunked certification build.
+#
+# Called by nightly-kcerts-amd64.yml (and by any future dispatch wrappers,
+# e.g. for full-regression or arm64 experiments).  Builds
+# a Dockerfile's cert-base target (toolchain + ACL2 + solvers, no books
+# certified), pushes it to ghcr as this run's checkpoint, then certifies the
+# full regression in a CHAIN of jobs that fit GitHub's 6-hour-per-job limit:
+# each certify job pulls the checkpoint, runs `make -k regression` under a
+# time budget (tools/certify-chunk.sh), docker-commits the container, and
+# pushes it back; make/cert.pl skip already-certified books, so each chunk
+# resumes where the previous one stopped.  On completion the checkpoint is
+# retagged as the real image tag.  The book_target input selects the full
+# regression (default) or just the kestrel/top tree (the kcerts book set).
+#
+# The full regression measures ~28.5 CPU-hours on an amd64 server (6.25 for
+# the kestrel books + 22.2 for the rest), i.e. roughly 10-20 wall hours at
+# -j3 on a 4-vCPU runner, hence the chain.  If it runs out of chunks before
+# finishing, re-dispatch the wrapper with resume_from set to this run's
+# checkpoint tag (printed in the summary) to continue instead of starting
+# over.  Checkpoint tags (ckpt-<run id>) are left in the package for
+# resumption and debugging; delete old ones by hand.
+#
+# The caller must grant: permissions: contents: read, packages: write.
+
+name: Chunked allcerts build (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'runs-on label (e.g. ubuntu-24.04, ubuntu-24.04-arm)'
+        required: true
+        type: string
+      image:
+        description: 'Image repository (e.g. ghcr.io/<owner>/<package>)'
+        required: true
+        type: string
+      dockerfile:
+        description: 'Dockerfile path (its cert-base target is built)'
+        required: true
+        type: string
+      build_args:
+        description: 'Multiline KEY=VALUE build args for the base build'
+        required: false
+        type: string
+        default: ''
+      cert_jobs:
+        description: 'Parallel certification jobs'
+        required: false
+        type: string
+        default: '3'
+      book_target:
+        description: "What to certify: 'regression' (full suite) or 'kestrel' (kestrel/top, the kcerts book set)"
+        required: false
+        type: string
+        default: 'regression'
+      chunk_minutes:
+        description: 'Time budget per certification chunk'
+        required: false
+        type: string
+        default: '300'
+      resume_from:
+        description: 'Existing checkpoint tag to resume; skips the base build'
+        required: false
+        type: string
+        default: ''
+      free_disk_space:
+        description: 'Remove pre-installed SDKs first (needed on amd64 runners, which start with only ~22 GB free)'
+        required: false
+        type: boolean
+        default: false
+      label:
+        description: 'Human name for the summary heading'
+        required: false
+        type: string
+        default: 'allcerts'
+
+jobs:
+  base:
+    name: Base image (toolchain + ACL2 + solvers)
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      ckpt: ${{ steps.tags.outputs.ckpt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Free disk space
+        if: ${{ inputs.free_disk_space }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+                      /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+                      /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Show runner resources
+        run: |
+          nproc
+          free -h
+          df -h /
+          grep -m1 -A3 -E 'model name|CPU implementer' /proc/cpuinfo || true
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          echo "ckpt=ckpt-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: ${{ inputs.resume_from == '' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push cert-base checkpoint
+        if: ${{ inputs.resume_from == '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          target: cert-base
+          push: true
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: ${{ inputs.image }}:${{ steps.tags.outputs.ckpt }}
+          build-args: ${{ inputs.build_args }}
+
+      - name: Adopt existing checkpoint (resume)
+        if: ${{ inputs.resume_from != '' }}
+        run: |
+          set -eu
+          docker pull "${{ inputs.image }}:${{ inputs.resume_from }}"
+          docker tag "${{ inputs.image }}:${{ inputs.resume_from }}" \
+                     "${{ inputs.image }}:${{ steps.tags.outputs.ckpt }}"
+          docker push "${{ inputs.image }}:${{ steps.tags.outputs.ckpt }}"
+
+  certify-1:
+    name: Certify (chunk 1)
+    needs: base
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      status: ${{ steps.chunk.outputs.status }}
+      cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        if: ${{ inputs.free_disk_space }}
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: chunk
+        uses: ./.github/actions/certify-chunk
+        with:
+          image: ${{ inputs.image }}
+          ckpt-tag: ${{ needs.base.outputs.ckpt }}
+          chunk-minutes: ${{ inputs.chunk_minutes }}
+          cert-jobs: ${{ inputs.cert_jobs }}
+          book-target: ${{ inputs.book_target }}
+
+  certify-2:
+    name: Certify (chunk 2)
+    needs: [base, certify-1]
+    if: ${{ needs.certify-1.outputs.status == 'continue' }}
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      status: ${{ steps.chunk.outputs.status }}
+      cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        if: ${{ inputs.free_disk_space }}
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: chunk
+        uses: ./.github/actions/certify-chunk
+        with:
+          image: ${{ inputs.image }}
+          ckpt-tag: ${{ needs.base.outputs.ckpt }}
+          chunk-minutes: ${{ inputs.chunk_minutes }}
+          cert-jobs: ${{ inputs.cert_jobs }}
+          book-target: ${{ inputs.book_target }}
+
+  certify-3:
+    name: Certify (chunk 3)
+    needs: [base, certify-2]
+    if: ${{ needs.certify-2.outputs.status == 'continue' }}
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      status: ${{ steps.chunk.outputs.status }}
+      cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        if: ${{ inputs.free_disk_space }}
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: chunk
+        uses: ./.github/actions/certify-chunk
+        with:
+          image: ${{ inputs.image }}
+          ckpt-tag: ${{ needs.base.outputs.ckpt }}
+          chunk-minutes: ${{ inputs.chunk_minutes }}
+          cert-jobs: ${{ inputs.cert_jobs }}
+          book-target: ${{ inputs.book_target }}
+
+  certify-4:
+    name: Certify (chunk 4)
+    needs: [base, certify-3]
+    if: ${{ needs.certify-3.outputs.status == 'continue' }}
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      status: ${{ steps.chunk.outputs.status }}
+      cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        if: ${{ inputs.free_disk_space }}
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: chunk
+        uses: ./.github/actions/certify-chunk
+        with:
+          image: ${{ inputs.image }}
+          ckpt-tag: ${{ needs.base.outputs.ckpt }}
+          chunk-minutes: ${{ inputs.chunk_minutes }}
+          cert-jobs: ${{ inputs.cert_jobs }}
+          book-target: ${{ inputs.book_target }}
+
+  finalize:
+    name: Finalize
+    needs: [base, certify-1, certify-2, certify-3, certify-4]
+    if: ${{ !cancelled() }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Free disk space
+        if: ${{ inputs.free_disk_space }}
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Evaluate chain result
+        id: result
+        run: |
+          set -eu
+          # The last chunk that actually ran decided the outcome.
+          final=""
+          total=0
+          for s in "${{ needs.certify-1.outputs.status }}:${{ needs.certify-1.outputs.cpu-seconds }}" \
+                   "${{ needs.certify-2.outputs.status }}:${{ needs.certify-2.outputs.cpu-seconds }}" \
+                   "${{ needs.certify-3.outputs.status }}:${{ needs.certify-3.outputs.cpu-seconds }}" \
+                   "${{ needs.certify-4.outputs.status }}:${{ needs.certify-4.outputs.cpu-seconds }}"; do
+            st="${s%%:*}"; cpu="${s##*:}"
+            if [ -n "${st}" ]; then final="${st}"; fi
+            if [ -n "${cpu}" ]; then total=$(( total + cpu )); fi
+          done
+          echo "final=${final:-none}" >> "$GITHUB_OUTPUT"
+          echo "cpu=${total}" >> "$GITHUB_OUTPUT"
+          echo "Chain result: ${final:-none}; total book CPU-seconds this run: ${total}"
+
+      - name: Publish final image tag
+        if: ${{ steps.result.outputs.final == 'done' }}
+        run: |
+          set -eu
+          ckpt="${{ inputs.image }}:${{ needs.base.outputs.ckpt }}"
+          docker pull "${ckpt}"
+          sha=$(docker run --rm "${ckpt}" git -C /root/acl2 rev-parse --short=7 HEAD)
+          docker tag "${ckpt}" "${{ inputs.image }}:master-${sha}"
+          docker tag "${ckpt}" "${{ inputs.image }}:latest"
+          docker push "${{ inputs.image }}:master-${sha}"
+          docker push "${{ inputs.image }}:latest"
+          echo "Pushed ${{ inputs.image }}:master-${sha} and :latest"
+
+      - name: Write summary
+        run: |
+          {
+            echo "## ${{ inputs.label }} — ${{ steps.result.outputs.final }}"
+            echo ""
+            echo "- Checkpoint tag: \`${{ needs.base.outputs.ckpt }}\`"
+            echo "- Book certification CPU-seconds this run: ${{ steps.result.outputs.cpu }}"
+            case "${{ steps.result.outputs.final }}" in
+              done)     echo "- Regression complete; final image pushed." ;;
+              continue) echo "- Chain exhausted before completion: re-dispatch with resume_from = \`${{ needs.base.outputs.ckpt }}\`." ;;
+              failed)   echo "- Regression finished with FAILED books; see the last chunk's log for the .cert.out list." ;;
+              error)    echo "- A chunk died unexpectedly; see its log." ;;
+              none)     echo "- No chunk ran; the base build probably failed — see the base job's log." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail the run unless certification completed
+        if: ${{ steps.result.outputs.final != 'done' }}
+        run: exit 1

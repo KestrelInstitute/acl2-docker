@@ -1,0 +1,105 @@
+# Nightly kcerts build, linux/amd64, on GitHub-hosted runners.
+#
+# Every night (08:17 UTC = 00:17 PST / 01:17 PDT; GitHub cron is UTC and
+# cannot follow daylight-saving changes, and top-of-the-hour slots are
+# oversubscribed, hence :17), this workflow builds SBCL + ACL2 master and
+# certifies the kestrel/top book set — the kcerts image contents — entirely
+# on GitHub's free public amd64 runners, and pushes the result to the
+# ghcr.io/kestrelinstitute/acl2-kcerts-nightly package (tags master-<sha>
+# and latest).  This package is separate from the official multi-platform
+# acl2-kcerts package, which is built on self-hosted runners.
+#
+# A check job first compares ACL2 master's current commit with the one in
+# the last pushed nightly and SKIPS the build when nothing changed, so
+# quiet nights cost one tiny job.  The build itself reuses the chunked
+# machinery of allcerts-chunked.yml with book_target=kestrel: measured at
+# 6.25 CPU-hours on a fast server, the kestrel certification should fit in
+# a single chunk here (~2-3 h at -j3) after the ~2 h base build.  If a
+# chunk boundary is ever hit, the chain continues automatically.
+#
+# Notes:
+# - Scheduled workflows run from the default branch only, and GitHub
+#   disables them after 60 days without repository activity (a maintainer
+#   gets an email to re-enable).
+# - Checkpoint tags (ckpt-<run id>) and nightly master-<sha> tags
+#   accumulate in the package; prune old ones by hand now and then.
+# - Certification failures fail the run loudly (nothing but the checkpoint
+#   is pushed), which doubles as a nightly canary for ACL2 master + the
+#   kestrel books on a plain public toolchain.
+
+name: Nightly kcerts amd64 (GitHub-hosted)
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build even if ACL2 master is unchanged since the last nightly'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: nightly-kcerts-amd64
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check for new ACL2 commits
+    runs-on: ubuntu-24.04
+    outputs:
+      build_needed: ${{ steps.compare.outputs.build_needed }}
+      acl2_sha: ${{ steps.compare.outputs.acl2_sha }}
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare ACL2 master with the last nightly
+        id: compare
+        run: |
+          set -eu
+          image=ghcr.io/kestrelinstitute/acl2-kcerts-nightly
+          sha=$(git ls-remote https://github.com/acl2/acl2.git refs/heads/master | cut -f1)
+          echo "ACL2 master is at ${sha}"
+          echo "acl2_sha=${sha}" >> "$GITHUB_OUTPUT"
+          last=""
+          if docker pull -q "${image}:latest" 2>/dev/null; then
+            last=$(docker run --rm "${image}:latest" git -C /root/acl2 rev-parse HEAD || true)
+            echo "Last nightly was built from ${last:-<unreadable>}"
+          else
+            echo "No previous nightly found."
+          fi
+          if [ "${sha}" = "${last}" ] && [ "${{ inputs.force || false }}" != "true" ]; then
+            echo "ACL2 master unchanged; skipping tonight's build."
+            echo "build_needed=false" >> "$GITHUB_OUTPUT"
+            echo "Nightly kcerts: ACL2 master unchanged (${sha}); build skipped." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "build_needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Chunked kcerts build
+    needs: check
+    if: ${{ needs.check.outputs.build_needed == 'true' }}
+    uses: ./.github/workflows/allcerts-chunked.yml
+    with:
+      runner: ubuntu-24.04
+      image: ghcr.io/kestrelinstitute/acl2-kcerts-nightly
+      dockerfile: ./Dockerfile
+      build_args: |
+        ACL2_COMMIT=${{ needs.check.outputs.acl2_sha }}
+        ACL2_BUILD_TYPE=master
+      book_target: kestrel
+      cert_jobs: '3'
+      chunk_minutes: '300'
+      free_disk_space: true
+      label: Nightly kcerts amd64
