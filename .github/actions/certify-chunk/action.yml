@@ -2,7 +2,7 @@ name: Certify one chunk
 description: >
   Pull the run's checkpoint image, run tools/certify-chunk.sh in it under a
   time budget, commit the container back to the checkpoint tag, and push it.
-  Used by the experimental arm64 allcerts workflows; the caller must already
+  Used by the chunked certification workflows (allcerts-chunked.yml); the caller must already
   be logged in to ghcr.io.
 
 inputs:

@@ -83,7 +83,7 @@ jobs:
       ckpt: ${{ steps.tags.outputs.ckpt }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Free disk space
         if: ${{ inputs.free_disk_space }}
@@ -102,7 +102,7 @@ jobs:
           grep -m1 -A3 -E 'model name|CPU implementer' /proc/cpuinfo || true
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -115,7 +115,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: ${{ inputs.resume_from == '' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push cert-base checkpoint
         if: ${{ inputs.resume_from == '' }}
@@ -148,11 +148,11 @@ jobs:
       status: ${{ steps.chunk.outputs.status }}
       cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Free disk space
         if: ${{ inputs.free_disk_space }}
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -175,11 +175,11 @@ jobs:
       status: ${{ steps.chunk.outputs.status }}
       cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Free disk space
         if: ${{ inputs.free_disk_space }}
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -202,11 +202,11 @@ jobs:
       status: ${{ steps.chunk.outputs.status }}
       cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Free disk space
         if: ${{ inputs.free_disk_space }}
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -229,11 +229,11 @@ jobs:
       status: ${{ steps.chunk.outputs.status }}
       cpu-seconds: ${{ steps.chunk.outputs.cpu-seconds }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Free disk space
         if: ${{ inputs.free_disk_space }}
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -258,7 +258,7 @@ jobs:
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
