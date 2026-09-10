@@ -161,7 +161,7 @@ The trade-offs:
 | Used for | `acl2-kcerts-nightly` | `acl2`, `acl2-kcerts`, `acl2-allcerts` |
 | Trigger | schedule (nightly), or by hand | by hand |
 | Cost | free and unmetered for public repositories | your own hardware |
-| Machine | 4 vCPUs, 16 GB RAM, ~45 GB disk | whatever you own (ours: a 32-core, 128 GB server; an Apple Silicon Mac) |
+| Machine | 4 vCPUs, 16 GB RAM, ~20 GB free disk (~50 GB after the workflow removes preinstalled SDKs) | whatever you own (ours: a 32-core, 128 GB server; an Apple Silicon Mac) |
 | Per-job limit | 6 hours — long certifications must be split (see below) | none in practice (5 days) |
 | Platforms | linux/amd64 only (GitHub's arm64 runners lack the FP traps ACL2 needs) | anything you own; arm64 via Apple Silicon |
 | Visibility | everything public: trigger, logs, runner, package | logs must stay private (they reveal host details) |
