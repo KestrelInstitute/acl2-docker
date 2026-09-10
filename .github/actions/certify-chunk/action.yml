@@ -53,7 +53,7 @@ runs:
         echo "status=${status}" >> "$GITHUB_OUTPUT"
         echo "cpu=${cpu}" >> "$GITHUB_OUTPUT"
         echo "Committing checkpoint (status: ${status})..."
-        docker commit work "${img}"
+        docker commit --change='CMD ["acl2"]' work "${img}"
         docker rm work
         docker push "${img}"
         df -h /
