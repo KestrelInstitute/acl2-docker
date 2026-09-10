@@ -4,118 +4,113 @@ For ACL2 documentation, tutorials, and reference material, see:
 - [ACL2 Documentation](https://www.cs.utexas.edu/~moore/acl2/) - Official ACL2 homepage
 - [ACL2 Manual](https://acl2.org/doc/) - Searchable online documentation
 
-Four kinds of images are available:
+## Which Image?
 
-- **`ghcr.io/kestrelinstitute/acl2-kcerts-nightly`** — medium size, platform
-  amd64 only.  All books reachable from `kestrel/top` are **already certified**,
-  and the STP (Axe) and Z3 (Smtlink) solvers are included.  Rebuilt **every
-  night** from the latest ACL2 master commit.
+Four images are published, all built from the same Dockerfile.  They
+differ in which books come pre-certified, which platforms they run on, how
+much you download, and how fresh their ACL2 is:
 
-- **`ghcr.io/kestrelinstitute/acl2`** — lean, multi-platform (amd64 + arm64).
-  Books are included as source and you certify the ones you need.
-  arm64 platform built on MacOS hardware.  Rebuilt on demand.
+| Image | Certified books | Platforms | Download (approx.) | ACL2 version | Best for |
+|-------|-----------------|-----------|--------------------|--------------|----------|
+| `ghcr.io/kestrelinstitute/acl2` | none (all books present as source) | amd64, arm64 | 1 GB | master at build time; rebuilt occasionally | the smallest download; certifying your own choice of books |
+| `ghcr.io/kestrelinstitute/acl2-kcerts` | `kestrel/top` and everything it depends on, plus the STP and Z3 solvers | amd64, arm64 | 3 GB | master at build time; rebuilt occasionally | Apple Silicon (native arm64); the Kestrel libraries and Axe, ready to include |
+| `ghcr.io/kestrelinstitute/acl2-kcerts-nightly` | same as `acl2-kcerts` | amd64 | 3 GB | **last night's master** | the freshest ACL2 with the Kestrel libraries, on amd64 |
+| `ghcr.io/kestrelinstitute/acl2-allcerts` | the full `make regression` suite, plus STP and Z3, plus the xdoc agent corpus | amd64 | 6 GB | master at build time; rebuilt occasionally | everything pre-certified; documentation lookup for agents |
 
-- **`ghcr.io/kestrelinstitute/acl2-kcerts`** — medium, multi-platform
-  (amd64 + arm64).  All books reachable from `kestrel/top` are **already
-  certified**, and the STP (Axe) and Z3 (Smtlink) solvers are included.
-  arm64 platform built on MacOS hardware. Rebuilt on demand.
+Download sizes are compressed; the images take roughly three times that
+on disk (tens of GB for allcerts).  Current sizes are shown on each
+package's page.  The exact ACL2 commit an image contains is in its
+`master-<sha>` tag (see "Image Tags" below).
 
-- **`ghcr.io/kestrelinstitute/acl2-allcerts`** — large, amd64 only.
-  All books of the standard regression suite are **already certified**, and
-  STP and Z3 are included. Rebuilt on demand.
-
-See "The Images With Certified Books" below for more information on those.
+**Which one?**  On an amd64 machine wanting the Kestrel libraries, take
+`acl2-kcerts-nightly` (freshest); on Apple Silicon, take
+`acl2-kcerts` (native arm64 — the amd64-only images run under emulation,
+slowly); if you want every community book certified, or the documentation
+corpus, take `acl2-allcerts`; if you want the smallest download and will
+certify books yourself, take `acl2`.
 
 ## Quick Start
 
-1. Pull the image
-```bash
-docker pull ghcr.io/kestrelinstitute/acl2:latest
-```
-
-2. Get a shell in the container. Note: the --rm flag means to clean up the container after exit.
-```bash
-docker run -it --rm ghcr.io/kestrelinstitute/acl2:latest bash
-```
-
-Then inside the container:
-
-3. Certify the books you need (use -j for parallel jobs)
-```bash
-cd books && cert.pl -j4 std/lists/top
-```
-
-4. Run ACL2
-```bash
-acl2
-```
-
-Then inside ACL2:
-
-5. Include the book you certified
-```lisp
-(include-book "std/lists/top" :dir :system)
-```
-
-Type `(quit)` to exit ACL2, and `exit` to leave the container.
-
----
-
-## The Images With Certified Books
-
-The `acl2-kcerts` and `acl2-allcerts` images skip the "certify the books you
-need" step for their book sets, so `include-book` works immediately for any
-already-certified book:
-
-- `acl2-kcerts`: `kestrel/top` and every book it depends on (a large portion
-  of the community books, including the Kestrel libraries and Axe).
-  Multi-platform (amd64 + arm64).
-- `acl2-allcerts`: every book in the standard `make regression` suite.
-  amd64 only.
-- `acl2-kcerts-nightly`: the same book set as `acl2-kcerts`, but rebuilt
-  every night from the latest ACL2 master.  amd64 only.
-
+1. Pull an image with certified books.  `acl2-kcerts` works on both
+   platforms; on amd64, `acl2-kcerts-nightly` is the same with a fresher
+   ACL2.
 ```bash
 docker pull ghcr.io/kestrelinstitute/acl2-kcerts:latest
-docker run -it --rm ghcr.io/kestrelinstitute/acl2-kcerts:latest
-# or, for the full-regression image (amd64 only):
-docker pull ghcr.io/kestrelinstitute/acl2-allcerts:latest
-docker run -it --rm ghcr.io/kestrelinstitute/acl2-allcerts:latest
-# or, for last night's ACL2 master with the kestrel books certified (amd64 only):
-docker pull ghcr.io/kestrelinstitute/acl2-kcerts-nightly:latest
-docker run -it --rm ghcr.io/kestrelinstitute/acl2-kcerts-nightly:latest
 ```
 
-That drops you directly into ACL2, where you can immediately do, e.g.:
+2. Run it.  With no command given, the container starts ACL2 directly.
+   (The `--rm` flag cleans up the container after exit.)
+```bash
+docker run -it --rm ghcr.io/kestrelinstitute/acl2-kcerts:latest
+```
 
+3. Inside ACL2, include any book in the image's certified set — no
+   certification step needed:
 ```lisp
 (include-book "std/lists/top" :dir :system)
 (include-book "kestrel/axe/top" :dir :system)
 ```
 
-Books outside an image's certified set are still present as source and can
-be certified in the container as usual with `cert.pl`.
+Type `(quit)` to exit ACL2 (and the container).  To get a shell instead of
+ACL2, append `bash` to the `docker run` command; to work on your own files,
+see "Mounting Local Files" below.
+
+## The Lean Image
+
+The `acl2` image contains every community book as source but certifies
+none of them, so you certify what you need:
+
+1. Pull the image and get a shell in the container:
+```bash
+docker pull ghcr.io/kestrelinstitute/acl2:latest
+docker run -it --rm ghcr.io/kestrelinstitute/acl2:latest bash
+```
+
+2. Certify the books you need (use -j for parallel jobs):
+```bash
+cd books && cert.pl -j4 std/lists/top
+```
+
+3. Run ACL2 and include the book you certified:
+```bash
+acl2
+```
+```lisp
+(include-book "std/lists/top" :dir :system)
+```
+
+Type `(quit)` to exit ACL2, and `exit` to leave the container.  Certified
+books are lost when a `--rm` container exits; see "Saving an Image with
+Certified Books" below to keep them.
+
+---
+
+## The Images With Certified Books
+
+The `acl2-kcerts`, `acl2-kcerts-nightly`, and `acl2-allcerts` images skip
+the "certify the books you need" step for their book sets, so
+`include-book` works immediately for any already-certified book.  Books
+outside an image's certified set are still present as source and can be
+certified in the container as usual with `cert.pl`.
 
 Notes:
 
 - **Size**: these images are large (certificates plus compiled books for
-  their whole book set; tens of GB for allcerts).  Make sure Docker has
-  enough disk before pulling.
+  their whole book set; tens of GB on disk for allcerts).  Make sure Docker
+  has enough disk before pulling.
 - **Platform**: `acl2-kcerts` is multi-platform.  `acl2-allcerts` and
   `acl2-kcerts-nightly` are linux/amd64 only; they run on Apple Silicon via
   emulation, but slowly — on arm64 machines prefer the kcerts or lean
   image.
-- **Nightly vs. kcerts**: `acl2-kcerts` and `acl2-kcerts-nightly` contain
-  the same certified book set; choose by freshness and platform.
-  `acl2-kcerts` is multi-platform but rebuilt only now and then; the
-  nightly is amd64 only but tracks ACL2 master with at most a day's lag
-  (nights when master has not changed are skipped, so `latest` always
-  holds the newest master that differed).  The nightly is built entirely
-  on GitHub-hosted runners with public logs — see "How the Images are
-  Built" in README.md, which also explains the `ckpt-*` tags in that
-  package (internal build checkpoints; ignore them, and don't be
-  surprised if the image shows more layers than `acl2-kcerts`).
-- **Solvers included** (both images):
+- **Nightly vs. kcerts**: the two contain the same certified book set;
+  choose by freshness and platform (see "Which Image?").  The nightly
+  skips nights when ACL2 master has not changed, so its `latest` is always
+  the newest master that differed.  It is built entirely on GitHub-hosted
+  runners with public logs — see "Automating Builds" in README.md.  Its
+  package also holds `ckpt-*` tags (internal build checkpoints; ignore
+  them), and its image shows more layers than `acl2-kcerts` because of how
+  it is built.
+- **Solvers included** (all three images):
   - **STP** (for the Axe toolkit) is installed at `/usr/local/bin/stp`.
     Axe's `defthm-stp`, `prove-with-stp`, etc. work out of the box.  The
     default `ACL2_STP_VARIETY` (2) is correct for the installed STP; you can
@@ -126,8 +121,8 @@ Notes:
     Python by absolute path and was in place when the Smtlink books were
     certified.
 - **Which books are certified**:
-  - kcerts: `kestrel/top` and its dependency tree (certified with
-    `cert.pl kestrel/top`).
+  - kcerts and kcerts-nightly: `kestrel/top` and its dependency tree
+    (certified with `cert.pl kestrel/top`).
   - allcerts: everything in `make regression`, which is all books except
     the `SLOW_BOOKS` list in `books/GNUmakefile` (a handful of very slow
     books, e.g. the x86isa and filesystem proof developments).
@@ -316,30 +311,21 @@ Install Docker for your platform:
 - **macOS**: [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Intel and Apple Silicon)
 - **Windows**: [Docker Desktop](https://www.docker.com/products/docker-desktop/) (follow instructions to install WSL 2 if needed)
 
-### Available Images
+### Image Tags
 
-Images are hosted on GitHub Container Registry, in four packages:
-
-- `ghcr.io/kestrelinstitute/acl2` — lean, books not certified.  Multi-platform
-  (linux/amd64 for Linux/Windows, linux/arm64 for macOS); Docker automatically
-  pulls the correct architecture.
-- `ghcr.io/kestrelinstitute/acl2-kcerts` — books reachable from `kestrel/top`
-  certified, STP and Z3 included.  Multi-platform.
-- `ghcr.io/kestrelinstitute/acl2-allcerts` — all regression books certified,
-  STP and Z3 included.  linux/amd64 only.
-- `ghcr.io/kestrelinstitute/acl2-kcerts-nightly` — the kcerts book set,
-  rebuilt nightly from the latest ACL2 master.  linux/amd64 only; no
-  `commit-*` tags (it always builds master), and its extra `ckpt-*` tags
-  are internal build checkpoints that can be ignored.
-
-See "The Images With Certified Books" above for the latter three.  All packages use the
-same tagging scheme:
+All four packages use the same tagging scheme:
 
 | Tag | Description | Git Status inside image |
 |-----|-------------|-------------------------|
 | `latest` | Most recent master build | On `master` branch, `git pull origin master` works |
 | `master-abc1234` | Built from master at commit abc1234 | On `master` branch, `git pull origin master` works |
 | `commit-abc1234` | Built from specific commit abc1234 | Detached HEAD, see "Updating ACL2" section |
+
+Two packages carry extra tags you can ignore: `acl2-kcerts` has
+per-architecture tags (`master-abc1234-amd64`, `master-abc1234-arm64`),
+the carriers of its multi-platform manifest; `acl2-kcerts-nightly` has
+`ckpt-*` tags, internal checkpoints of in-progress builds.  The nightly
+has no `commit-*` tags, since it always builds master.
 
 ### Verifying Image Authenticity
 
@@ -404,7 +390,9 @@ For large proof efforts, you may need to increase Docker Desktop's memory limit:
 
 ### Certifying Books
 
-The image includes ACL2 ready to run, plus all ACL2 books as source code, but they have not been certified.
+Every image includes all ACL2 books as source code; the lean `acl2` image
+certifies none of them, and the others certify only their book sets.
+Anything else you certify yourself.
 
 When you certify a book, all the books it depends on are also certified. Since many books are independent of each other, we recommend using the `-j` option based on how many cores you have free.
 
@@ -530,7 +518,19 @@ Increase Docker's memory allocation (see Memory Configuration section above) or 
 
 ### "No space left on device"
 
-Docker images and containers can consume significant disk space. Clean up unused resources:
+Docker images and containers can consume significant disk space.  Start
+with the commands that never touch containers — they remove untagged
+(`<none>`) images and stale build cache:
+
+```bash
+docker image prune
+docker builder prune
+```
+
+`docker system prune` does both of those **and removes every stopped
+container**.  Don't run it while a stopped container holds work you intend
+to `docker commit` (see "Saving an Image with Certified Books" above).
+Otherwise, it is the one-command cleanup:
 
 ```bash
 docker system prune
@@ -577,23 +577,19 @@ ghcr.io/kestrelinstitute/acl2   latest            9255e6ca65bc   2 hours ago    
 ```
 
 This can happen when the old `acl2:latest` is still referenced by a stopped
-container (e.g., one that was run without `--rm`).  To clean up stopped containers
-and untagged images we suggest first trying
+container (e.g., one that was run without `--rm`).  To remove untagged
+images, try
 
 ```bash
 docker image prune
 ```
 
-or
-
-```bash
-docker builder prune
-```
-
-If you have a stopped container with data that you intend to `docker commit`
-later, you will NOT want to run the following command, but if you want to remove
-all stopped containers, as well as the above, you can do it all in one command:
+(and `docker builder prune` for stale build cache); neither touches
+containers.  To also remove all stopped containers in one command:
 
 ```bash
 docker system prune
 ```
+
+Don't run that while a stopped container holds work you intend to
+`docker commit` later (see "Saving an Image with Certified Books").
