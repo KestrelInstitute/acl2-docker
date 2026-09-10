@@ -4,18 +4,27 @@ For ACL2 documentation, tutorials, and reference material, see:
 - [ACL2 Documentation](https://www.cs.utexas.edu/~moore/acl2/) - Official ACL2 homepage
 - [ACL2 Manual](https://acl2.org/doc/) - Searchable online documentation
 
-Three images are available:
+Four kinds of images are available:
+
+- **`ghcr.io/kestrelinstitute/acl2-kcerts-nightly`** — medium size, platform
+  amd64 only.  All books reachable from `kestrel/top` are **already certified**,
+  and the STP (Axe) and Z3 (Smtlink) solvers are included.  Rebuilt **every
+  night** from the latest ACL2 master commit.
 
 - **`ghcr.io/kestrelinstitute/acl2`** — lean, multi-platform (amd64 + arm64).
   Books are included as source and you certify the ones you need.
+  arm64 platform built on MacOS hardware.  Rebuilt on demand.
+
 - **`ghcr.io/kestrelinstitute/acl2-kcerts`** — medium, multi-platform
   (amd64 + arm64).  All books reachable from `kestrel/top` are **already
   certified**, and the STP (Axe) and Z3 (Smtlink) solvers are included.
+  arm64 platform built on MacOS hardware. Rebuilt on demand.
+
 - **`ghcr.io/kestrelinstitute/acl2-allcerts`** — large, amd64 only.
   All books of the standard regression suite are **already certified**, and
-  STP and Z3 are included.
+  STP and Z3 are included. Rebuilt on demand.
 
-See "The Images With Certified Books" below for the latter two.
+See "The Images With Certified Books" below for more information on those.
 
 ## Quick Start
 
@@ -63,6 +72,8 @@ already-certified book:
   Multi-platform (amd64 + arm64).
 - `acl2-allcerts`: every book in the standard `make regression` suite.
   amd64 only.
+- `acl2-kcerts-nightly`: the same book set as `acl2-kcerts`, but rebuilt
+  every night from the latest ACL2 master.  amd64 only.
 
 ```bash
 docker pull ghcr.io/kestrelinstitute/acl2-kcerts:latest
@@ -70,6 +81,9 @@ docker run -it --rm ghcr.io/kestrelinstitute/acl2-kcerts:latest
 # or, for the full-regression image (amd64 only):
 docker pull ghcr.io/kestrelinstitute/acl2-allcerts:latest
 docker run -it --rm ghcr.io/kestrelinstitute/acl2-allcerts:latest
+# or, for last night's ACL2 master with the kestrel books certified (amd64 only):
+docker pull ghcr.io/kestrelinstitute/acl2-kcerts-nightly:latest
+docker run -it --rm ghcr.io/kestrelinstitute/acl2-kcerts-nightly:latest
 ```
 
 That drops you directly into ACL2, where you can immediately do, e.g.:
@@ -87,9 +101,20 @@ Notes:
 - **Size**: these images are large (certificates plus compiled books for
   their whole book set; tens of GB for allcerts).  Make sure Docker has
   enough disk before pulling.
-- **Platform**: `acl2-kcerts` is multi-platform.  `acl2-allcerts` is
-  linux/amd64 only; it runs on Apple Silicon via emulation, but slowly —
-  on arm64 machines prefer the kcerts or lean image.
+- **Platform**: `acl2-kcerts` is multi-platform.  `acl2-allcerts` and
+  `acl2-kcerts-nightly` are linux/amd64 only; they run on Apple Silicon via
+  emulation, but slowly — on arm64 machines prefer the kcerts or lean
+  image.
+- **Nightly vs. kcerts**: `acl2-kcerts` and `acl2-kcerts-nightly` contain
+  the same certified book set; choose by freshness and platform.
+  `acl2-kcerts` is multi-platform but rebuilt only now and then; the
+  nightly is amd64 only but tracks ACL2 master with at most a day's lag
+  (nights when master has not changed are skipped, so `latest` always
+  holds the newest master that differed).  The nightly is built entirely
+  on GitHub-hosted runners with public logs — see "How the Images are
+  Built" in README.md, which also explains the `ckpt-*` tags in that
+  package (internal build checkpoints; ignore them, and don't be
+  surprised if the image shows more layers than `acl2-kcerts`).
 - **Solvers included** (both images):
   - **STP** (for the Axe toolkit) is installed at `/usr/local/bin/stp`.
     Axe's `defthm-stp`, `prove-with-stp`, etc. work out of the box.  The
@@ -171,7 +196,10 @@ follows.
 
 2. Pull `ghcr.io/kestrelinstitute/acl2-allcerts:latest` (all regression
    books certified), or `ghcr.io/kestrelinstitute/acl2-kcerts:latest`
-   (smaller; the kestrel/top books).  These are linux/amd64 images.
+   (smaller; the kestrel/top books), or
+   `ghcr.io/kestrelinstitute/acl2-kcerts-nightly:latest` (the kestrel/top
+   books certified on last night's ACL2 master).  These are linux/amd64
+   images.
    If a tag is not found, list what exists with an anonymous token:
    `curl -s "https://ghcr.io/token?scope=repository:kestrelinstitute/acl2-allcerts:pull"`
    then GET `https://ghcr.io/v2/kestrelinstitute/acl2-allcerts/tags/list`
@@ -290,7 +318,7 @@ Install Docker for your platform:
 
 ### Available Images
 
-Images are hosted on GitHub Container Registry, in three packages:
+Images are hosted on GitHub Container Registry, in four packages:
 
 - `ghcr.io/kestrelinstitute/acl2` — lean, books not certified.  Multi-platform
   (linux/amd64 for Linux/Windows, linux/arm64 for macOS); Docker automatically
@@ -299,8 +327,12 @@ Images are hosted on GitHub Container Registry, in three packages:
   certified, STP and Z3 included.  Multi-platform.
 - `ghcr.io/kestrelinstitute/acl2-allcerts` — all regression books certified,
   STP and Z3 included.  linux/amd64 only.
+- `ghcr.io/kestrelinstitute/acl2-kcerts-nightly` — the kcerts book set,
+  rebuilt nightly from the latest ACL2 master.  linux/amd64 only; no
+  `commit-*` tags (it always builds master), and its extra `ckpt-*` tags
+  are internal build checkpoints that can be ignored.
 
-See "The Images With Certified Books" above for the latter two.  All packages use the
+See "The Images With Certified Books" above for the latter three.  All packages use the
 same tagging scheme:
 
 | Tag | Description | Git Status inside image |
@@ -311,10 +343,13 @@ same tagging scheme:
 
 ### Verifying Image Authenticity
 
-The images carry no build attestation: they are built on Kestrel's own
-machines, and GitHub's artifact attestations are not available for such
-builds.  To make sure you run exactly the image you examined, pin it by
-digest rather than by tag.  The digest of a tag is shown on the package
+None of the images carry a signed build attestation.  The `acl2`,
+`acl2-kcerts`, and `acl2-allcerts` packages are built on Kestrel's own
+machines, where GitHub's artifact attestations are not available; the
+nightly package is built entirely on GitHub-hosted runners and every step
+of each build is publicly logged in the acl2-docker repository's Actions
+history, but it is not attested at present either.  To make sure you run
+exactly the image you examined, pin it by digest rather than by tag.  The digest of a tag is shown on the package
 page and by:
 
 ```bash
@@ -543,7 +578,21 @@ ghcr.io/kestrelinstitute/acl2   latest            9255e6ca65bc   2 hours ago    
 
 This can happen when the old `acl2:latest` is still referenced by a stopped
 container (e.g., one that was run without `--rm`).  To clean up stopped containers
-and untagged images:
+and untagged images we suggest first trying
+
+```bash
+docker image prune
+```
+
+or
+
+```bash
+docker builder prune
+```
+
+If you have a stopped container with data that you intend to `docker commit`
+later, you will NOT want to run the following command, but if you want to remove
+all stopped containers, as well as the above, you can do it all in one command:
 
 ```bash
 docker system prune

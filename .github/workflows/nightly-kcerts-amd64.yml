@@ -6,7 +6,7 @@
 # certifies the kestrel/top book set — the kcerts image contents — entirely
 # on GitHub's free public amd64 runners, and pushes the result to the
 # ghcr.io/kestrelinstitute/acl2-kcerts-nightly package (tags master-<sha>
-# and latest).  This package is separate from the official multi-platform
+# and latest).  This package is separate from the multi-platform
 # acl2-kcerts package, which is built on self-hosted runners.
 #
 # A check job first compares ACL2 master's current commit with the one in
