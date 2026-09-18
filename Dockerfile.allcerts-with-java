@@ -1,0 +1,170 @@
+# =============================================================================
+# allcerts-with-java: the allcerts image plus Java, for the Axe JVM examples
+# =============================================================================
+# Builds an image like 'allcerts' (all regression books certified, STP and
+# Z3 included, xdoc agent corpus) that ALSO contains:
+#   - a JDK (javac/java), for compiling Java code to analyze with the Axe
+#     JVM tools (the Formal Unit Tester, the lifter);
+#   - the Java bootstrap classes (rt.jar, unzipped) that those tools read,
+#     with JAVA_BOOTSTRAP_CLASSES_ROOT pointing at them;
+#   - the Bouncy Castle jar the Axe crypto examples verify against;
+#   - the books under kestrel/axe/jvm/examples certified.  They are excluded
+#     from 'make regression' (see books/GNUmakefile) because they need the
+#     Java assets above, so they are certified here as a separate step.
+# Published as ghcr.io/kestrelinstitute/kestrel-allcerts-java, built from
+# the ACL2 'testing-kestrel' branch (Kestrel's active development branch,
+# synced with master roughly daily).
+#
+# This is a TWO-STEP build.  Everything up to and including the solvers
+# comes from the main Dockerfile's 'cert-base' target, built first and
+# tagged locally; this file starts FROM that image and adds the Java parts
+# before certification (they must be present when cert.pl runs).  Keeping
+# the two files separate means the main Dockerfile stays the single
+# description of the standard images, and this file holds only what is
+# specific to the Java variant.
+#
+#   # 1. the base, from the main Dockerfile (ACL2_COMMIT: a commit or branch)
+#   docker build --target cert-base \
+#     --build-arg ACL2_COMMIT=testing-kestrel --build-arg ACL2_BUILD_TYPE=commit \
+#     -t acl2-cert-base:build .
+#   # 2. this file
+#   docker build -f Dockerfile.allcerts-with-java \
+#     --build-arg CERT_JOBS=8 -t kestrel-allcerts-java .
+#
+# Java assets (see books/kestrel/axe/jvm/examples/README.md and
+# crypto/README.md in the ACL2 sources).  Both are cached as assets of the
+# 'java-assets-1' release of this repository, whose release notes record
+# where each came from; the build downloads them from there and verifies
+# them against the checksums pinned below:
+#   - rt.jar, the Java bootstrap classes, taken from an Azul Zulu 7 JDK
+#     archive (OpenJDK 7u352, GPLv2 with Classpath Exception; Azul's
+#     "Community Availability" build).  The examples README asks for
+#     Oracle's JDK 7u80, which cannot be redistributed; Zulu 7 is a later
+#     update of the same JDK 7 line, so its class files are the closest
+#     available match.  Only rt.jar is used, and only as a source of class
+#     files -- nothing from the archive is executed, so the x64 archive is
+#     right for arm64 images too.  The crypto books refer to the jar as
+#     ../jdk1.7.0_80/jre/lib/rt.jar, so a jdk1.7.0_80 symlink points at the
+#     Zulu directory.  To use a different JDK build, point RTJAR_URL /
+#     RTJAR_SHA256 / RTJAR_MEMBER / RTJAR_DIR at it -- nothing else changes
+#     (the Formal Unit Tester examples also certify with Temurin 8 and with
+#     Ubuntu's OpenJDK 7u211 rt.jar, for instance).
+#   - jce-jdk13-134.jar: Bouncy Castle 1.34 for JDK 1.3, the crypto code the
+#     Axe examples verify (its sha1 is the one given in crypto/README.md).
+#
+# Build arguments:
+#   BASE_IMAGE   - the cert-base image from step 1 (default acl2-cert-base:build)
+#   ACL2_BRANCH  - branch to set up for 'git pull' inside the image; the base
+#                  is a detached-HEAD checkout of the requested commit, and
+#                  this turns it into a tracking branch (default testing-kestrel)
+#   CERT_JOBS    - parallel certification jobs (default: all cores)
+#   JDK_VERSION  - Ubuntu OpenJDK package version to install (default 17)
+#   ASSETS_URL   - where the two Java assets are downloaded from (default:
+#                  the java-assets-1 release of this repository)
+#   RTJAR_URL, RTJAR_SHA256, RTJAR_MEMBER, RTJAR_DIR - where the bootstrap
+#                  classes come from (archive URL, its sha256, the path of
+#                  rt.jar inside it, the directory name to install under)
+#   JCE_URL, JCE_JAR, JCE_SHA256 - the Bouncy Castle jar (URL, file name,
+#                  sha256)
+
+ARG BASE_IMAGE=acl2-cert-base:build
+
+# =============================================================================
+# Stage 1: Java tooling and assets on top of cert-base (build target: java-base)
+# =============================================================================
+FROM ${BASE_IMAGE} AS java-base
+
+ARG ACL2_BRANCH=testing-kestrel
+ARG JDK_VERSION=17
+ARG ASSETS_URL=https://github.com/KestrelInstitute/acl2-docker/releases/download/java-assets-1
+ARG RTJAR_URL=${ASSETS_URL}/zulu7.56.0.11-ca-jdk7.0.352-linux_x64.tar.gz
+ARG RTJAR_SHA256=8a7387c1ed151474301b6553c6046f865dc6c1e1890bcf106acc2780c55727c8
+ARG RTJAR_MEMBER=zulu7.56.0.11-ca-jdk7.0.352-linux_x64/jre/lib/rt.jar
+ARG RTJAR_DIR=zulu7.56.0.11-ca-jdk7.0.352
+ARG JCE_URL=${ASSETS_URL}/jce-jdk13-134.jar
+ARG JCE_JAR=jce-jdk13-134.jar
+ARG JCE_SHA256=86381e813b09d09825807c9d4f688fd7bead2bbef853c013467f77bf93c16c40
+
+# The base checked out the requested commit as a detached HEAD (the main
+# Dockerfile's 'commit' build type).  Make it a local branch tracking the
+# development branch so 'git pull origin ${ACL2_BRANCH}' works in the image.
+RUN git update-ref "refs/remotes/origin/${ACL2_BRANCH}" HEAD && \
+    git checkout -q -B "${ACL2_BRANCH}" && \
+    git branch --set-upstream-to="origin/${ACL2_BRANCH}" "${ACL2_BRANCH}" && \
+    git status -sb | head -1
+
+# JDK: javac/java for users' own Java code.  Not needed by the certifications
+# below (the Axe tools read .class files and the bootstrap classes directly);
+# it is here because the image is for developing Java code to analyze.
+# unzip: to unpack rt.jar.  curl: for the Bouncy Castle download.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    "openjdk-${JDK_VERSION}-jdk-headless" \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && javac -version && java -version
+
+WORKDIR ${ACL2_ROOT}/books/kestrel/axe/jvm/examples
+
+# Java bootstrap classes.  The Formal Unit Tester reads the unzipped
+# hierarchy via JAVA_BOOTSTRAP_CLASSES_ROOT, and the crypto books read the
+# jar itself by the fixed path ../jdk1.7.0_80/jre/lib/rt.jar (see their
+# read-jar forms), so keep both, under the archive's real name with a
+# jdk1.7.0_80 symlink for that path.  Only rt.jar is extracted; the archive
+# is not kept.
+RUN curl -fsSL "${RTJAR_URL}" -o /tmp/jre.tar.gz && \
+    echo "${RTJAR_SHA256}  /tmp/jre.tar.gz" | sha256sum -c - && \
+    mkdir -p "${RTJAR_DIR}/jre/lib" && \
+    tar -xzf /tmp/jre.tar.gz -O "${RTJAR_MEMBER}" > "${RTJAR_DIR}/jre/lib/rt.jar" && \
+    rm /tmp/jre.tar.gz && \
+    unzip -q -o "${RTJAR_DIR}/jre/lib/rt.jar" -d "${RTJAR_DIR}/jre/lib/rt.jar.unzipped" && \
+    rm -rf jdk1.7.0_80 && ln -s "${RTJAR_DIR}" jdk1.7.0_80 && \
+    printf 'rt.jar taken from %s (sha256 %s), member %s\n' \
+      "${RTJAR_URL}" "${RTJAR_SHA256}" "${RTJAR_MEMBER}" > "${RTJAR_DIR}/SOURCE.txt" && \
+    du -sh "${RTJAR_DIR}/jre/lib/rt.jar" "${RTJAR_DIR}/jre/lib/rt.jar.unzipped" && \
+    ls -l jdk1.7.0_80/jre/lib/rt.jar
+
+ENV JAVA_BOOTSTRAP_CLASSES_ROOT="${ACL2_ROOT}/books/kestrel/axe/jvm/examples/${RTJAR_DIR}/jre/lib/rt.jar.unzipped"
+
+# Bouncy Castle 1.34 for the crypto examples (read by their read-jar forms
+# as crypto/jce-jdk13-134.jar).
+RUN curl -fsSL "${JCE_URL}" -o "crypto/${JCE_JAR}" && \
+    echo "${JCE_SHA256}  crypto/${JCE_JAR}" | sha256sum -c -
+
+WORKDIR ${ACL2_ROOT}
+
+# =============================================================================
+# Stage 2: Certify everything (build target: allcerts-java)
+# =============================================================================
+FROM java-base AS allcerts-java
+
+LABEL org.opencontainers.image.title="ACL2 (all regression books certified) with Java, for the Axe JVM tools"
+LABEL org.opencontainers.image.description="ACL2 theorem prover built on SBCL from the testing-kestrel branch, with all regression books and the Axe JVM examples certified, the STP and Z3 solvers, a JDK, and the Java bootstrap classes"
+
+ARG CERT_JOBS=
+
+# The standard regression, exactly as the 'allcerts' target does it (strict;
+# make -k so every failing book is reported; artifacts cleaned up in the
+# same layer).  This is the long step.
+RUN J="${CERT_JOBS:-$(nproc)}" && \
+    echo "Certifying the full regression suite with -j${J}..." && \
+    certify-books-and-clean make -j"${J}" regression ACL2="${ACL2}"
+
+# The Axe JVM examples, which the regression excludes.  Their top books
+# list the example books in a comment that the dependency scanner reads,
+# so certifying the two tops certifies every example.  A separate layer, so
+# a failure here does not discard the regression above.
+RUN J="${CERT_JOBS:-$(nproc)}" && \
+    echo "Certifying the Axe JVM examples with -j${J}..." && \
+    certify-books-and-clean cert.pl -j "${J}" --keep-going \
+      kestrel/axe/jvm/examples/formal-unit-tests/top \
+      kestrel/axe/jvm/examples/crypto/top
+
+# Agent documentation corpus, as in the 'allcerts' target (see tools/DESIGN.md).
+COPY tools/xdoc_extract.py /usr/local/bin/xdoc_extract.py
+RUN python3 /usr/local/bin/xdoc_extract.py books/doc/manual books/doc/agent-corpus && \
+    du -sh books/doc/agent-corpus
+
+# Start ACL2 by default, like every other image (explicit, in case the base
+# image was tagged from a container whose command overrode it).
+CMD ["acl2"]
