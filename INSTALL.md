@@ -153,14 +153,16 @@ Notes:
   but rarely useful: previously certified books become stale with respect to
   the new executable.  Prefer pulling a newer image build.
 
-### Using the images from a Claude (Cowork) cloud session
+## Using the images from AI assistants
+
+### From a Claude Cowork cloud session
 
 Claude's cloud sandboxes can pull and run these images, which turns a fresh
 Claude session into a ready-to-go ACL2 development environment in a couple of
 minutes (no building, no book certification).
 
 **One-time account setup** (a human must do this; Claude cannot): the
-sandbox's network must be allowed to reach the registry.  In the Claude app
+sandbox's network must be allowed to reach the registry. In the Claude app
 under **Settings → Capabilities → Domain allowlist**, keep "Package managers
 only" and add two **Additional allowed domains**:
 
@@ -170,47 +172,114 @@ pkg-containers.githubusercontent.com
 ```
 
 (The first serves the image manifests; the second serves the actual layer
-blobs, so pulls fail partway without it.)
+blobs, so pulls fail partway without it.)  If Claude should also be able to
+`git pull` ACL2 or fetch other GitHub repositories during the session, make
+sure `github.com` is allowed too; a blocked host shows up as a 403 from the
+sandbox's proxy, and no container setting can work around that.
 
-![Claude Capabilities settings showing ghcr.io and pkg-containers.githubusercontent.com in the Additional allowed domains list](images/claude-domain-allowlist.png)
+**What to expect from the sandbox:** although this could change at any time, as
+of 2026-09 it is a small VM (2 vCPUs, about 8 GB of RAM, a few tens of GB of
+disk) on platform linux/amd64, that runs as root, reaches the network only
+through a local egress proxy that re-terminates TLS with its own CA, and can
+reboot between turns.  Pulled images and stopped containers survive such a
+reboot; nothing survives the end of the session, so each new session re-pulls
+the image (about two minutes).
 
-**Then paste this to a new Claude session:**
+**Choosing an image.** The block below defaults to
+`ghcr.io/kestrelinstitute/acl2-allcerts:latest`.  To use a different image
+(see [Image Tags](#image-tags)), change the image name on the first line of
+the block before pasting; nothing else needs editing.  If you are not sure
+which tags currently exist, leave the default: Claude can list the available
+tags for you (step 2 tells it how).
 
-````text
-Please set up ACL2 in this sandbox from the prebuilt Docker image, as
-follows.
+**Then start a new Claude Cowork session and paste this:**
 
-1. The Docker daemon is not running by default, and it must be started
-   with this sandbox's egress proxy settings or registry pulls fail
-   with 403:
+````
+Image: ghcr.io/kestrelinstitute/acl2-allcerts:latest
+
+Please set up ACL2 in this sandbox from the prebuilt Docker image named
+on the first line above.  In the steps below, IMAGENAME stands for that
+image name; substitute it literally in commands.  Do the steps in order,
+and when you are done report the image tag and digest you pulled, the
+ACL2 version banner, the certificate count, and the sanity-check results.
+
+1. Start the Docker daemon.  It is not running by default, and it must
+   be started with this sandbox's egress proxy settings or registry
+   pulls fail with 403:
 
    ```bash
    sudo env HTTP_PROXY="$HTTPS_PROXY" HTTPS_PROXY="$HTTPS_PROXY" NO_PROXY="$NO_PROXY" \
      dockerd --iptables=false --ip6tables=false > /tmp/dockerd.log 2>&1 &
    ```
 
-2. Pull `ghcr.io/kestrelinstitute/acl2-allcerts:latest` (all regression
-   books certified), or `ghcr.io/kestrelinstitute/acl2-kcerts:latest`
-   (smaller; the kestrel/top books), or
-   `ghcr.io/kestrelinstitute/acl2-kcerts-nightly:latest` (the kestrel/top
-   books certified on last night's ACL2 master).  These are linux/amd64
-   images.
-   If a tag is not found, list what exists with an anonymous token:
-   `curl -s "https://ghcr.io/token?scope=repository:kestrelinstitute/acl2-allcerts:pull"`
-   then GET `https://ghcr.io/v2/kestrelinstitute/acl2-allcerts/tags/list`
-   with that bearer token.
+   Wait until `docker info` succeeds (a few seconds).  If the sandbox
+   VM restarts later in the session (uptime resets, `docker` reports
+   that the daemon is not running), rerun this command: /var/lib/docker
+   survives a restart, so images and stopped containers are still
+   there and can be `docker start`ed.
 
-3. Do ACL2 work inside the container (mount the working directory):
+2. Pull the image: `docker pull IMAGENAME`.  It is a linux/amd64 image
+   of a few GB; the pull takes a couple of minutes.
+
+   If the pull fails with "not found", the tag does not exist.  Do not
+   guess at another tag: list the tags that do exist and ask me which
+   one to use.  The registry API needs a token even for public images,
+   and an anonymous one is enough.  Run this from the sandbox shell
+   (not inside the image, which has no curl), with REPO set to the part
+   of IMAGENAME between `ghcr.io/kestrelinstitute/` and the colon:
 
    ```bash
-   docker run -it --rm -v "$PWD":/work -w /work \
-     ghcr.io/kestrelinstitute/acl2-allcerts:latest bash
+   REPO=acl2-allcerts
+   TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:kestrelinstitute/$REPO:pull" \
+           | sed -E 's/.*"token":"([^"]+)".*/\1/')
+   curl -s -H "Authorization: Bearer $TOKEN" \
+        "https://ghcr.io/v2/kestrelinstitute/$REPO/tags/list"
    ```
 
-   Inside: `acl2` starts ACL2, and every book in the image's certified
-   set can be included immediately, e.g.
+3. Start ONE long-lived container and do all ACL2 work inside it.
+   Two sandbox facts shape the command: the daemon runs with
+   --iptables=false, so a container on the default bridge network has
+   no DNS and no route out; and the sandbox's egress proxy re-terminates
+   TLS with a private CA that the image does not trust.  So use host
+   networking, pass the proxy variables, and mount the CA bundle (its
+   path is in $SSL_CERT_FILE on the sandbox; if that variable is unset,
+   `curl -sS "$HTTPS_PROXY/__agentproxy/status"` reports it as
+   caBundlePath):
+
+   ```bash
+   docker run -d --name acl2 --network host \
+     -e HTTPS_PROXY="$HTTPS_PROXY" -e NO_PROXY="$NO_PROXY" \
+     -v "$SSL_CERT_FILE":/etc/ccr-ca.crt:ro \
+     -e SSL_CERT_FILE=/etc/ccr-ca.crt -e GIT_SSL_CAINFO=/etc/ccr-ca.crt \
+     -e CURL_CA_BUNDLE=/etc/ccr-ca.crt \
+     -v "$PWD":/work -w /work \
+     IMAGENAME sleep infinity
+   ```
+
+   Then run commands with `docker exec acl2 bash -c '...'` (or
+   `docker exec -it acl2 bash` for an interactive shell).  Do not use
+   `--rm`: keeping the container is what lets work inside it persist
+   across commands and across a daemon restart (`docker start acl2`).
+   The proxy's port changes when the sandbox restarts, so for any
+   command that needs the network, pass the current value again:
+   `docker exec -e HTTPS_PROXY="$HTTPS_PROXY" acl2 bash -c '...'`.
+   If the proxy answers 403 for some host, that host is not on the
+   organization's allowlist: tell me which host, and do not try to
+   route around it.
+
+   Inside the container: `acl2` starts ACL2, and every book in the
+   image's certified set can be included immediately, e.g.
    `(include-book "kestrel/axe/top" :dir :system)`.  The STP solver (for
-   Axe) and Z3 (for Smtlink) are installed and configured.
+   Axe) and Z3 (for Smtlink) are installed and configured.  The ACL2
+   sources and books are in /root/acl2 (a git checkout of the commit
+   the image was built from); cert.pl is on the PATH.
+
+   If you only need files or git history from GitHub inside the
+   container, you do not need container networking at all: the
+   sandbox's own git and curl are already configured for the proxy, so
+   fetch or clone on the sandbox side under the working directory,
+   which the container sees at /work (e.g. `git -C /root/acl2 fetch
+   /work/<clone> master` inside the container).
 
 4. To certify a NEW book, use `cert.pl my-book` (from the directory
    containing it).  If the book uses Axe's STP tools (`defthm-stp`,
@@ -225,15 +294,226 @@ follows.
    skip-proofs-okp because STP-backed events are recorded that way.)
 
 5. Sanity checks that should all succeed: `stp --version` and
-   `z3 --version` in the container; a small `defthm-stp` proof; and
-   `find books -name '*.cert' | wc -l` reporting thousands of books.
+   `z3 --version` in the container; a small `defthm-stp` proof
+   certified with cert.pl as in step 4; and
+   `find /root/acl2/books -name '*.cert' | wc -l` reporting thousands
+   of books (about 12,000 for acl2-allcerts, fewer for the kcerts
+   images).
+
+6. Respect the sandbox's size.  Check it with `nproc` and `free -h`;
+   as of 2026-09 it was 2 CPUs and about 8 GB of RAM, shared between
+   the sandbox and the container.  Use `cert.pl -j $(nproc)` at most,
+   and do not attempt a full regression (it would take a day or more).
+   For scale: recertifying the kestrel/axe/top closure (1,757 books,
+   124 CPU-minutes) with -j 2 took 70 minutes of wall clock, the last
+   30 of them a serial chain of x86 books that take 3-8 minutes each.
+   If a heavy book is killed with exit code 137 (out of memory), rerun
+   it with -j 1.  Before starting anything you expect to take more
+   than about 15 minutes, tell me the estimate.
+
+7. Do not `git pull` or otherwise modify /root/acl2 unless I ask:
+   updating the books invalidates the certificates of every changed
+   book and of everything that depends on it (two weeks of upstream
+   changes invalidated about 85% of the 12,000 certificates in
+   acl2-allcerts).  If a newer ACL2 is needed, the right route is a
+   newer image tag (each repository carries `master-<commit>` tags;
+   list them as in step 2), not a pull inside the container.
+   If I do ask you to update ACL2 in place (`cd /root/acl2 && git pull
+   && make update LISP=$(which sbcl)`, run with the proxy variables
+   passed to docker exec), you do not need to work out which books
+   became stale: `cert.pl -j $(nproc) bookname` first recertifies every
+   book in bookname's dependency closure whose certificate is out of
+   date, and leaves the rest alone.
+
+8. To keep changes made inside the container (an updated ACL2 build,
+   newly certified books) available to later `docker run` commands in
+   this session, snapshot it: `docker commit acl2 acl2-work:latest`.
+   This lasts only for the session.
 ````
 
-Notes: the sandbox typically has few cores and modest RAM, which is fine
-for interactive proof development and certifying small books, but not for
-re-certifying large books or running wide parallel regressions — that is
-what the pre-certified images are for.  The `docker save`/release-asset
-route is an alternative when registry access is unavailable.
+### From a ChatGPT Work session
+
+ChatGPT Work sandboxes can download this public image when public internet
+access is enabled.  The Work sandbox tested for this guide did not expose a
+usable Docker daemon or the kernel interfaces needed by Docker, Podman, or
+PRoot.  The tested approach below pulls and unpacks the image without a daemon,
+then runs its amd64 binaries directly.  This gives the session the image's
+ACL2, certified books, STP, and Z3, but it is **not an isolated container**.
+
+**One-time account setup** (a human must do this): in ChatGPT under
+**Settings → Data controls → Work network access**, enable **Allow public
+internet access**, then start a new Work session.  There is no separate domain
+allowlist: `ghcr.io` serves the manifest and authentication token, while
+`pkg-containers.githubusercontent.com` serves redirected layer downloads.
+
+The current image needs roughly 10 GB of free disk at peak during this setup;
+allow additional headroom because image sizes change.  The recipe is for the
+linux/amd64-only `acl2-allcerts` image and checks the sandbox's OS and
+architecture before downloading it.
+
+**Then paste this to a new ChatGPT Work session:**
+
+````text
+Please set up ACL2 in this ChatGPT Work sandbox from
+`ghcr.io/kestrelinstitute/acl2-allcerts:latest`.  Keep a concise log of the
+commands, image digest, failures, workarounds, and verification results.
+
+ChatGPT Work cannot run Docker/Podman here, and PRoot is blocked because it
+requires ptrace.  Use this tested daemonless workflow instead:
+
+1. Confirm that `uname -m` is `x86_64`, `/etc/os-release` reports Ubuntu
+   24.04, and at least 12 GB is free.  Stop and explain the problem if any
+   check fails; direct execution on a different host ABI is untested.  Use
+   `/root/acl2-work-image` as the setup directory.  Before changing anything,
+   stop if any of these paths already exists; do not overwrite them:
+   `/root/acl2`, `/root/.venvs/smtlink`, `/root/smtlink-config`, or
+   `/root/foo`.
+
+2. Download Skopeo and Umoci from Ubuntu without installing them system-wide.
+   Apt's normal `_apt` privilege drop and dpkg locking do not work in this
+   sandbox, so use a local apt state/cache and download-only mode:
+
+   ```bash
+   set -euo pipefail
+   setup_dir=/root/acl2-work-image
+   mkdir -p "$setup_dir/apt/lists/partial" \
+            "$setup_dir/apt/archives/partial" \
+            "$setup_dir/tools"
+
+   apt_options=(
+     -o Debug::NoLocking=true
+     -o APT::Sandbox::User=root
+     -o "Dir::State::lists=$setup_dir/apt/lists"
+     -o "Dir::Cache=$setup_dir/apt"
+   )
+   apt-get "${apt_options[@]}" update
+   apt-get "${apt_options[@]}" --download-only install -y \
+     --no-install-recommends skopeo umoci
+   for deb in "$setup_dir"/apt/archives/*.deb; do
+     dpkg-deb -x "$deb" "$setup_dir/tools"
+   done
+
+   export PATH="$setup_dir/tools/usr/bin:$PATH"
+   export LD_LIBRARY_PATH="$setup_dir/tools/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+   skopeo --version
+   umoci --version
+   ```
+
+3. Inspect, record, pull, and unpack the image.  Skopeo performs GHCR's
+   anonymous bearer-token exchange and follows the layer redirects itself:
+
+   ```bash
+   image=ghcr.io/kestrelinstitute/acl2-allcerts:latest
+   skopeo inspect "docker://$image" | tee "$setup_dir/image-info.json"
+   skopeo --policy "$setup_dir/tools/etc/containers/policy.json" \
+     copy --retry-times 3 "docker://$image" \
+     "oci:$setup_dir/oci:latest"
+   umoci unpack --rootless --image "$setup_dir/oci:latest" \
+     "$setup_dir/bundle"
+   ```
+
+4. Put the path-sensitive files in their original physical locations.  ACL2
+   rejects the pre-certified books if `/root/acl2` is merely a symlink:
+
+   ```bash
+   image_root="$setup_dir/bundle/rootfs"
+   mv "$image_root/root/acl2" /root/acl2
+   mkdir -p /root/.venvs
+   mv "$image_root/root/.venvs/smtlink" /root/.venvs/smtlink
+   mv "$image_root/root/smtlink-config" /root/smtlink-config
+   mv "$image_root/root/foo" /root/foo
+   ```
+
+5. Create `$setup_dir/bin`, then create two executable launchers.  The first,
+   `$setup_dir/bin/acl2`, must contain exactly:
+
+   ```bash
+   #!/bin/sh
+   set -eu
+   setup_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+   image_root="$setup_dir/bundle/rootfs"
+   dynamic_space_size=${ACL2_DYNAMIC_SPACE_SIZE:-16000}
+   export SBCL_HOME="$image_root/usr/local/lib/sbcl"
+   exec "$image_root/usr/local/bin/sbcl" \
+     --tls-limit 16384 \
+     --dynamic-space-size "$dynamic_space_size" \
+     --control-stack-size 64 \
+     --disable-ldb \
+     --core /root/acl2/saved_acl2.core \
+     ${SBCL_USER_ARGS:-} \
+     --end-runtime-options \
+     --no-userinit \
+     --eval '(acl2::sbcl-restart)' \
+     "$@"
+   ```
+
+   The second, `$setup_dir/acl2-work`, must contain exactly:
+
+   ```bash
+   #!/bin/sh
+   set -eu
+   setup_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+   image_root="$setup_dir/bundle/rootfs"
+   export HOME=/root
+   export USER=root
+   export ACL2_ROOT=/root/acl2
+   export ACL2="$setup_dir/bin/acl2"
+   export CERT_PL_RM_OUTFILES=1
+   export PATH="$setup_dir/bin:/root/.venvs/smtlink/bin:$image_root/usr/local/bin:/root/acl2/bin:/root/acl2/books/build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+   export LD_LIBRARY_PATH="$image_root/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+   if [ "$#" -eq 0 ]; then
+     set -- acl2
+   fi
+   exec "$@"
+   ```
+
+   Make both files executable.  `/usr/local` is read-only here, so do not try
+   to install the launchers there.
+
+6. Set `runner=/root/acl2-work-image/acl2-work` and verify all of the
+   following:
+
+   ```bash
+   "$runner" sbcl --version
+   "$runner" stp --version
+   "$runner" z3 --version
+   "$runner" sh -c \
+     'printf "certified books: "; find /root/acl2/books -name "*.cert" | wc -l'
+   ```
+
+   The count should be in the thousands.  Also run ACL2 with this input and
+   confirm that it prints `:STP-PROOF-SUCCEEDED` with no `******** FAILED
+   ********` message:
+
+   ```lisp
+   (include-book "kestrel/axe/defthm-stp" :dir :system :ttags :all)
+   (defthm-stp work-stp-smoke
+     (equal (bvplus 32 x y) (bvplus 32 y x)))
+   (value-triple :stp-proof-succeeded)
+   (good-bye)
+   ```
+
+7. Use `$runner` with no arguments to start ACL2.  Use `$runner bash` for a
+   shell with the image tools on `PATH`, or prefix a command directly, for
+   example `$runner cert.pl my-book`.  This is not a container: the current
+   project directory is already visible at its normal path, so no bind mount
+   is needed.
+
+   To certify a new book that uses Axe's STP tools, put this next to it in
+   `my-book.acl2` before running `$runner cert.pl my-book`:
+
+   ```
+   ; cert-flags: ? t :ttags :all :skip-proofs-okp t
+   ```
+
+8. Only after all checks pass, the downloaded OCI layout and apt cache may be
+   deleted to recover several GB.  Keep `bundle`, `tools`, `bin`,
+   `acl2-work`, and `image-info.json`; the launcher needs them.
+````
+
+The launcher's 16 GB SBCL dynamic-space default fits the Work sandbox tested
+for this guide.  Override it for a particular invocation with, for example,
+`ACL2_DYNAMIC_SPACE_SIZE=8000 /root/acl2-work-image/acl2-work acl2`.
 
 ### Driving ACL2 through the acl2-mcp server (recommended for agents)
 
