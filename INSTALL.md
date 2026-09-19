@@ -338,7 +338,8 @@ access is enabled.  The Work sandbox tested for this guide did not expose a
 usable Docker daemon or the kernel interfaces needed by Docker, Podman, or
 PRoot.  The tested approach below pulls and unpacks the image without a daemon,
 then runs its amd64 binaries directly.  This gives the session the image's
-ACL2, certified books, STP, and Z3, but it is **not an isolated container**.
+ACL2 and whatever certified books and solvers that image contains, but it is
+**not an isolated container**.
 
 **One-time account setup** (a human must do this): in ChatGPT under
 **Settings → Data controls → Work network access**, enable **Allow public
@@ -346,17 +347,23 @@ internet access**, then start a new Work session.  There is no separate domain
 allowlist: `ghcr.io` serves the manifest and authentication token, while
 `pkg-containers.githubusercontent.com` serves redirected layer downloads.
 
-The current image needs roughly 10 GB of free disk at peak during this setup;
-allow additional headroom because image sizes change.  The recipe is for the
-linux/amd64-only `acl2-allcerts` image and checks the sandbox's OS and
-architecture before downloading it.
+**Choosing an image.** The block below defaults to
+`ghcr.io/kestrelinstitute/acl2-allcerts:latest`.  To use a different image
+(see [Which Image?](#which-image) and [Image Tags](#image-tags)), change the
+image name on the first line of the block before pasting; nothing else needs
+editing.  The largest current image needs roughly 10 GB of free disk at peak
+during this setup; allow additional headroom because image sizes change.  The
+recipe checks the sandbox's OS and architecture before downloading the image.
 
 **Then paste this to a new ChatGPT Work session:**
 
 ````text
-Please set up ACL2 in this ChatGPT Work sandbox from
-`ghcr.io/kestrelinstitute/acl2-allcerts:latest`.  Keep a concise log of the
-commands, image digest, failures, workarounds, and verification results.
+Image: ghcr.io/kestrelinstitute/acl2-allcerts:latest
+
+Please set up ACL2 in this ChatGPT Work sandbox from the prebuilt image named
+on the first line above.  In the steps below, IMAGENAME stands for that image
+name; substitute it literally in commands.  Keep a concise log of the commands,
+image digest, failures, workarounds, and verification results.
 
 ChatGPT Work cannot run Docker/Podman here, and PRoot is blocked because it
 requires ptrace.  Use this tested daemonless workflow instead:
@@ -365,9 +372,9 @@ requires ptrace.  Use this tested daemonless workflow instead:
    24.04, and at least 12 GB is free.  Stop and explain the problem if any
    check fails; direct execution on a different host ABI is untested.  Use
    `/root/acl2-work-image` as the setup directory.  Before changing anything,
-   stop if any of these paths already exists; do not overwrite them:
-   `/root/acl2`, `/root/.venvs/smtlink`, `/root/smtlink-config`, or
-   `/root/foo`.
+   stop if `/root/acl2` or `/root/foo` already exists; do not overwrite either.
+   For any image except the lean `ghcr.io/kestrelinstitute/acl2` image, also
+   stop if `/root/.venvs/smtlink` or `/root/smtlink-config` exists.
 
 2. Download Skopeo and Umoci from Ubuntu without installing them system-wide.
    Apt's normal `_apt` privilege drop and dpkg locking do not work in this
@@ -403,7 +410,7 @@ requires ptrace.  Use this tested daemonless workflow instead:
    anonymous bearer-token exchange and follows the layer redirects itself:
 
    ```bash
-   image=ghcr.io/kestrelinstitute/acl2-allcerts:latest
+   image=IMAGENAME
    skopeo inspect "docker://$image" | tee "$setup_dir/image-info.json"
    skopeo --policy "$setup_dir/tools/etc/containers/policy.json" \
      copy --retry-times 3 "docker://$image" \
@@ -418,9 +425,13 @@ requires ptrace.  Use this tested daemonless workflow instead:
    ```bash
    image_root="$setup_dir/bundle/rootfs"
    mv "$image_root/root/acl2" /root/acl2
-   mkdir -p /root/.venvs
-   mv "$image_root/root/.venvs/smtlink" /root/.venvs/smtlink
-   mv "$image_root/root/smtlink-config" /root/smtlink-config
+   if [ -d "$image_root/root/.venvs/smtlink" ]; then
+     mkdir -p /root/.venvs
+     mv "$image_root/root/.venvs/smtlink" /root/.venvs/smtlink
+   fi
+   if [ -f "$image_root/root/smtlink-config" ]; then
+     mv "$image_root/root/smtlink-config" /root/smtlink-config
+   fi
    mv "$image_root/root/foo" /root/foo
    ```
 
@@ -470,20 +481,30 @@ requires ptrace.  Use this tested daemonless workflow instead:
    Make both files executable.  `/usr/local` is read-only here, so do not try
    to install the launchers there.
 
-6. Set `runner=/root/acl2-work-image/acl2-work` and verify all of the
-   following:
+6. Set `runner=/root/acl2-work-image/acl2-work` and verify the common parts of
+   every image:
 
    ```bash
    "$runner" sbcl --version
-   "$runner" stp --version
-   "$runner" z3 --version
    "$runner" sh -c \
      'printf "certified books: "; find /root/acl2/books -name "*.cert" | wc -l'
    ```
 
-   The count should be in the thousands.  Also run ACL2 with this input and
-   confirm that it prints `:STP-PROOF-SUCCEEDED` with no `******** FAILED
-   ********` message:
+   Interpret the certificate count according to the selected image: the lean
+   `acl2` image intentionally has no certified community books; the kcerts
+   images have the `kestrel/top` closure; and `acl2-allcerts` has thousands
+   (about 12,000 in the build tested for this guide).
+
+   For every image except the lean `acl2` image, also run:
+
+   ```bash
+   "$runner" stp --version
+   "$runner" z3 --version
+   ```
+
+   For those images, then run ACL2 with the following input and confirm that
+   it prints `:STP-PROOF-SUCCEEDED` with no `******** FAILED ********`
+   message:
 
    ```lisp
    (include-book "kestrel/axe/defthm-stp" :dir :system :ttags :all)
@@ -493,14 +514,18 @@ requires ptrace.  Use this tested daemonless workflow instead:
    (good-bye)
    ```
 
+   For the lean `acl2` image, instead start ACL2 and use
+   `(value-triple (+ 20 22))` as the sanity check; it should print 42.
+
 7. Use `$runner` with no arguments to start ACL2.  Use `$runner bash` for a
    shell with the image tools on `PATH`, or prefix a command directly, for
    example `$runner cert.pl my-book`.  This is not a container: the current
    project directory is already visible at its normal path, so no bind mount
    is needed.
 
-   To certify a new book that uses Axe's STP tools, put this next to it in
-   `my-book.acl2` before running `$runner cert.pl my-book`:
+   With any image except the lean `acl2` image, to certify a new book that uses
+   Axe's STP tools, put this next to it in `my-book.acl2` before running
+   `$runner cert.pl my-book`:
 
    ```
    ; cert-flags: ? t :ttags :all :skip-proofs-okp t

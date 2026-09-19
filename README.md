@@ -18,7 +18,7 @@ enough detail to reproduce either.
   source.  Its build targets are `runtime` (lean), `cert-base` (solvers
   installed, no books certified), `kcerts`, and `allcerts`.
 - `INSTALL.md` — installing and running the images, including from Claude
-  cloud sessions.
+  Cowork and ChatGPT Work cloud sessions.
 - `.github/workflows/` — the nightly build that runs on GitHub-hosted
   runners: `nightly-kcerts-amd64.yml`, and the reusable
   `allcerts-chunked.yml` it calls (with `.github/actions/certify-chunk`
