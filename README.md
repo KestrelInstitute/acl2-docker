@@ -4,7 +4,10 @@ Prebuilt Docker images of the [ACL2](https://www.cs.utexas.edu/~moore/acl2/)
 theorem prover on SBCL, published to the GitHub Container Registry in four
 packages.
 
-**To install and run an image, go to [INSTALL.md](INSTALL.md).**
+[!IMPORTANT]
+## To install and run an image, go to [INSTALL.md](INSTALL.md).
+It has the quick start, which image to pick, and the copy-paste setup 
+for Claude Cowork and ChatGPT Work sessions.
 
 This page is for anyone who wants to build ACL2 images themselves: it
 describes what the images contain and how they are tagged, how to build
