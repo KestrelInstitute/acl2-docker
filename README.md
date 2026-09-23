@@ -298,13 +298,15 @@ This is also why the nightly is amd64 only.
   points at the venv's Python by absolute path and is written before
   certification, so the certified Smtlink books have it baked in.
 - Certification artifacts that are no longer needed are removed:
-  `.cert.out`, `.cert.time`, `.pcert0`/`.pcert1`, and `workxxx` files.
+  `.cert.out` (and other `.out` logs), `.cert.time`, and `workxxx` files.
   What remains for each book: the source, its `.cert` file, its compiled
-  `.fasl` file, its `.port` file, and (for two-pass books) its `.acl2x`
-  and `@expansion.lsp` files — the build-system files are kept because
-  cert.pl needs them when certifying new books on top of the ones in the
-  image (it loads included books' `.port` files, and regenerates missing
-  `.acl2x` files it considers dependencies).
+  `.fasl` file, its `.port` file, and, where certification produces them,
+  its `.acl2x` and `@expansion.lsp` files (two-pass books) and its
+  `.pcert0`/`.pcert1` files (provisional certification) — the build-system
+  files are kept because cert.pl needs them when certifying new books on
+  top of the ones in the image (it loads included books' `.port` files,
+  and regenerates missing `.acl2x` and `.pcert*` files it considers
+  dependencies, recertifying the book in the `.pcert*` case).
 
 ## License
 

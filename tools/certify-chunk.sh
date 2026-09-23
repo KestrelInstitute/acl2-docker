@@ -66,11 +66,12 @@ echo "=== certify-chunk: this chunk certified ${cpu##* } books," \
 if [ "${rc}" -eq 0 ]; then
   echo "=== certify-chunk: regression COMPLETE, no failures."
   echo "Removing certification artifacts not needed by include-book..."
-  # Keep in sync with certify-books-and-clean in the Dockerfile.
+  # Keep in sync with certify-books-and-clean in the Dockerfile (which
+  # also explains why .port, .acl2x, @expansion.lsp, .pcert0 and .pcert1
+  # files are kept).
   find . -type f \( -name '*.cert.out' -o -name '*.acl2x.out' \
        -o -name '*.pcert0.out' -o -name '*.pcert1.out' \
        -o -name '*.cert.time' \
-       -o -name '*.pcert0' -o -name '*.pcert1' \
        -o -name 'workxxx*' \) -delete
   rm -rf doc/manual/download
   echo "Final books directory size:"

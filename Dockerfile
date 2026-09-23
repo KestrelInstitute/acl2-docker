@@ -377,6 +377,13 @@ RUN z3 --version && \
 #   cert.pl's dependency graph, so if they are missing, any later cert.pl
 #   run whose dependency tree touches a two-pass book spends time
 #   regenerating them, even when nothing actually needs recertification.
+# - .pcert0 files (provisional certification, cert_param pcert) are KEPT
+#   for the same reason again: the generated Makefile has foo.cert depend
+#   on foo.pcert1, which depends on foo.pcert0, and marks .pcert0 as
+#   .PRECIOUS (make itself removes .pcert1, an .INTERMEDIATE), so with the
+#   .pcert0 deleted the next "make regression" redoes the whole
+#   pcertify/convert/complete chain -- i.e. recertifies the book --
+#   although nothing changed.  Only their .out logs are removed.
 # - .cert.out files of successful books were already removed during the run
 #   by CERT_PL_RM_OUTFILES; failed books keep theirs, which is how the
 #   failure report below identifies them.
@@ -400,7 +407,6 @@ if "$@" 2>&1 | tee /tmp/certify.log ; then
   find . -type f \( -name '*.cert.out' -o -name '*.acl2x.out' \
        -o -name '*.pcert0.out' -o -name '*.pcert1.out' \
        -o -name '*.cert.time' \
-       -o -name '*.pcert0' -o -name '*.pcert1' \
        -o -name 'workxxx*' \) -delete
   # The manual build (doc/top, allcerts only) also creates
   # doc/manual/download/: website-distribution archives of the manual

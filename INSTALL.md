@@ -6,9 +6,10 @@ For ACL2 documentation, tutorials, and reference material, see:
 
 ## Which Image?
 
-Four images are published, all built from the same Dockerfile.  They
-differ in which books come pre-certified, which platforms they run on, how
-much you download, and how fresh their ACL2 is:
+Five images are published, all built from the same Dockerfile (the Java
+image from a second Dockerfile that builds on it).  They differ in which
+books come pre-certified, which platforms they run on, how much you
+download, and how fresh their ACL2 is:
 
 | Image | Certified books | Platforms | Download (approx.) | ACL2 version | Best for |
 |-------|-----------------|-----------|--------------------|--------------|----------|
@@ -16,24 +17,29 @@ much you download, and how fresh their ACL2 is:
 | `ghcr.io/kestrelinstitute/acl2-kcerts` | `kestrel/top` and everything it depends on, plus the STP and Z3 solvers | amd64, arm64 | 3 GB | master at build time; rebuilt occasionally | Apple Silicon (native arm64); the Kestrel libraries and Axe, ready to include |
 | `ghcr.io/kestrelinstitute/acl2-kcerts-nightly` | same as `acl2-kcerts` | amd64 | 3 GB | **last night's master** | the freshest ACL2 with the Kestrel libraries, on amd64 |
 | `ghcr.io/kestrelinstitute/acl2-allcerts` | the full `make regression` suite, plus STP and Z3, plus the xdoc agent corpus | amd64 | 6 GB | master at build time; rebuilt occasionally | everything pre-certified; documentation lookup for agents |
+| `ghcr.io/kestrelinstitute/kestrel-allcerts-java` | everything in `acl2-allcerts`, plus the Axe JVM examples, plus a JDK and the Java class library the Axe JVM tools read | arm64 | 6 GB | **`testing-kestrel`** branch (Kestrel's development branch, synced with master roughly daily); rebuilt nightly when the branch has changed | Apple Silicon: everything pre-certified, and the Axe JVM tools (Formal Unit Tester, JVM lifter) ready to use |
 
 Download sizes are compressed; the images take roughly three times that
-on disk (tens of GB for allcerts).  Current sizes are shown on each
-package's page.  The exact ACL2 commit an image contains is in its
-`master-<sha>` tag (see "Image Tags" below).
+on disk (tens of GB for the allcerts images).  Current sizes are shown on
+each package's page.  The exact ACL2 commit an image contains is in its
+`master-<sha>` tag, or for the Java image its `<sha>` tag (see "Image
+Tags" below).
 
 **Which one?**  On an amd64 machine wanting the Kestrel libraries, take
-`acl2-kcerts-nightly` (freshest); on Apple Silicon, take
-`acl2-kcerts` (native arm64 — the amd64-only images run under emulation,
-slowly); if you want every community book certified, or the documentation
-corpus, take `acl2-allcerts`; if you want the smallest download and will
-certify books yourself, take `acl2`.
+`acl2-kcerts-nightly` (freshest); on Apple Silicon, take `acl2-kcerts`
+(native arm64 — the amd64-only images run under emulation, slowly), or
+`kestrel-allcerts-java` if you want every book certified or use the Axe
+JVM tools (native arm64, but note it tracks Kestrel's development branch
+rather than master); if you want every community book certified on amd64,
+or the documentation corpus, take `acl2-allcerts`; if you want the
+smallest download and will certify books yourself, take `acl2`.
 
 ## Quick Start
 
 1. Pull an image with certified books.  `acl2-kcerts` works on both
    platforms; on amd64, `acl2-kcerts-nightly` is the same with a fresher
-   ACL2.
+   ACL2, and on Apple Silicon, `kestrel-allcerts-java` has every book
+   certified (see "Which Image?").
 ```bash
 docker pull ghcr.io/kestrelinstitute/acl2-kcerts:latest
 ```
@@ -87,21 +93,24 @@ Certified Books" below to keep them.
 
 ## The Images With Certified Books
 
-The `acl2-kcerts`, `acl2-kcerts-nightly`, and `acl2-allcerts` images skip
-the "certify the books you need" step for their book sets, so
-`include-book` works immediately for any already-certified book.  Books
-outside an image's certified set are still present as source and can be
-certified in the container as usual with `cert.pl`.
+The `acl2-kcerts`, `acl2-kcerts-nightly`, `acl2-allcerts`, and
+`kestrel-allcerts-java` images skip the "certify the books you need" step
+for their book sets, so `include-book` works immediately for any
+already-certified book.  Books outside an image's certified set are still
+present as source and can be certified in the container as usual with
+`cert.pl`.
 
 Notes:
 
 - **Size**: these images are large (certificates plus compiled books for
-  their whole book set; tens of GB on disk for allcerts).  Make sure Docker
-  has enough disk before pulling.
+  their whole book set; tens of GB on disk for the allcerts images).  Make
+  sure Docker has enough disk before pulling.
 - **Platform**: `acl2-kcerts` is multi-platform.  `acl2-allcerts` and
   `acl2-kcerts-nightly` are linux/amd64 only; they run on Apple Silicon via
-  emulation, but slowly — on arm64 machines prefer the kcerts or lean
-  image.
+  emulation, but slowly — on arm64 machines prefer the kcerts, Java, or
+  lean image.  `kestrel-allcerts-java` is linux/arm64 only (built natively
+  on Apple Silicon); on an amd64 machine it runs only under emulation, if
+  Docker is set up for that, and slowly.
 - **Nightly vs. kcerts**: the two contain the same certified book set;
   choose by freshness and platform (see "Which Image?").  The nightly
   skips nights when ACL2 master has not changed, so its `latest` is always
@@ -110,7 +119,7 @@ Notes:
   package also holds `ckpt-*` tags (internal build checkpoints; ignore
   them), and its image shows more layers than `acl2-kcerts` because of how
   it is built.
-- **Solvers included** (all three images):
+- **Solvers included** (all four images):
   - **STP** (for the Axe toolkit) is installed at `/usr/local/bin/stp`.
     Axe's `defthm-stp`, `prove-with-stp`, etc. work out of the box.  The
     default `ACL2_STP_VARIETY` (2) is correct for the installed STP; you can
@@ -126,17 +135,25 @@ Notes:
   - allcerts: everything in `make regression`, which is all books except
     the `SLOW_BOOKS` list in `books/GNUmakefile` (a handful of very slow
     books, e.g. the x86isa and filesystem proof developments).
+  - kestrel-allcerts-java: everything in `make regression` (as for
+    allcerts, but from the `testing-kestrel` branch), plus the books under
+    `kestrel/axe/jvm/examples` (the Formal Unit Tester examples and the
+    Axe crypto proofs), which the regression leaves out because they need
+    the Java class library that only this image has.  See "The Java Image"
+    below.
 - **Removed artifacts**: to keep the image (relatively) small, files not
-  needed after certification were deleted: `.cert.out` proof logs,
-  `.cert.time`, `.pcert0`/`.pcert1`, and `workxxx` files.  Each certified
-  book retains its source, its `.cert`, its compiled `.fasl`, its `.port`
-  file, and (for two-pass books) its `.acl2x` and `@expansion.lsp` files.
-  The retained build-system files are needed to certify new books on top
-  of the ones in the image: cert.pl loads the `.port` file of every
-  included book, and treats `.acl2x` files as dependencies that it would
+   needed after certification were deleted: `.cert.out` proof logs (and
+   the `.acl2x.out`/`.pcert*.out` logs), `.cert.time`, and `workxxx`
+   files.  Each certified book retains its source, its `.cert`, its
+   compiled `.fasl`, its `.port` file, and, where certification produces
+   them, its `.acl2x` and `@expansion.lsp` files (two-pass books) and its
+   `.pcert0`/`.pcert1` files (provisional certification).  The retained
+   build-system files are needed to certify new books on top of the ones
+   in the image: cert.pl loads the `.port` file of every included book,
+  and treats `.acl2x` and `.pcert*` files as dependencies that it would
   otherwise spend time regenerating.  If you want to see a book's proof
   output, just re-certify it in the container.
-- **Agent documentation corpus** (allcerts only): the image contains
+- **Agent documentation corpus** (allcerts and kestrel-allcerts-java): the image contains
   `books/doc/agent-corpus/` — the full xdoc manual converted to one
   plain-text file per topic plus a grep-able `index.tsv`, designed for
   AI agents (and handy for humans): `grep -i 'tail recursion'
@@ -149,6 +166,70 @@ Notes:
 - **Updating ACL2 inside these images** (git pull + `make update`) is possible
   but rarely useful: previously certified books become stale with respect to
   the new executable.  Prefer pulling a newer image build.
+
+## The Java Image (`kestrel-allcerts-java`)
+
+`kestrel-allcerts-java` is the allcerts image for Apple Silicon, with the
+extras that the Axe JVM tools need.  It differs from `acl2-allcerts` in
+four ways:
+
+- **Platform**: linux/arm64 only, built natively on Apple Silicon.
+- **ACL2 branch**: built from `testing-kestrel`, Kestrel's development
+  branch, which is synced with master roughly daily.  Inside the image the
+  checkout is on that branch, so `git pull origin testing-kestrel` works
+  (see "Updating ACL2" below).  It is rebuilt every night that the branch
+  has changed; each build is tagged with the ACL2 commit it was built from
+  (see "Image Tags").
+- **Java tooling**: a JDK (`javac`, `java`; OpenJDK 17), for compiling
+  Java code to analyze, and the class library that Axe's JVM tools read
+  when they analyze Java code: the `rt.jar` of Azul Zulu 7 (OpenJDK 7u352),
+  unpacked at
+  `/root/acl2/books/kestrel/axe/jvm/examples/zulu7.56.0.11-ca-jdk7.0.352/jre/lib/rt.jar.unzipped`,
+  which is what the `JAVA_BOOTSTRAP_CLASSES_ROOT` environment variable
+  points to.  (A `jdk1.7.0_80` symlink beside it keeps the path the crypto
+  example books use working, and the Bouncy Castle jar those books verify
+  is at `.../examples/crypto/jce-jdk13-134.jar`.)  Nothing from that
+  library is ever executed; Axe reads its `.class` files as data, which is
+  also why an x64 build of it serves an arm64 image.
+- **Extra certified books**: the examples under `kestrel/axe/jvm/examples`
+  (`formal-unit-tests/` and `crypto/`), which the ordinary regression
+  skips because they need the class library.
+
+**Running the Formal Unit Tester.**  Everything it needs is in place
+(`ACL2`, `JAVA_BOOTSTRAP_CLASSES_ROOT`, STP on the `PATH`, the tester book
+certified), so from a shell in the container you can point its script at
+a Java file; test methods are the ones whose names start with `test` (or
+`fail_test`, for tests expected to fail):
+
+```bash
+docker run -it --rm -v ~/my-java-project:/work -w /work \
+  ghcr.io/kestrelinstitute/kestrel-allcerts-java:latest bash
+```
+```bash
+/root/acl2/books/kestrel/axe/jvm/tester.sh AbsTest.java
+```
+
+The script compiles the file with `javac` if its `.class` is missing or
+older, then runs the tester and prints a summary of which test methods
+passed (proved) or failed (with a counterexample).  The first run in a
+container also saves an ACL2 image with the tester built in, which takes
+most of a minute; later runs skip that.  To use the tester from within
+ACL2 instead, compile the file first (`javac -g -source 1.7 -target 1.7
+AbsTest.java`), then
+`(include-book "kestrel/axe/jvm/tester" :dir :system :ttags :all)`
+followed by `(test-file "AbsTest.java")`, as the certified examples in
+`books/kestrel/axe/jvm/examples/formal-unit-tests/` do.  Note that the
+tester compiles Java sources as Java 7 (`javac -source 1.7 -target 1.7`),
+which JDK 17 still accepts (with warnings); JDK 20 and later do not.
+
+**The crypto examples** in `books/kestrel/axe/jvm/examples/crypto/` are
+complete Axe proofs of Bouncy Castle's AES-128 implementations against a
+formal specification; being certified, they can be included directly, e.g.
+`(include-book "kestrel/axe/jvm/examples/crypto/aes-128-encrypt-light-and-spec" :dir :system)`,
+or used as templates for proofs about your own Java code (they read
+classes with `read-class` and `read-jar`).  The `README.md` files in the
+`examples` directory and its `crypto` subdirectory describe the setup that
+this image has already done.
 
 ## Using the images from AI assistants
 
@@ -185,9 +266,10 @@ the image (about two minutes).
 **Choosing an image.** The block below defaults to
 `ghcr.io/kestrelinstitute/acl2-allcerts:latest`.  To use a different image
 (see [Image Tags](#image-tags)), change the image name on the first line of
-the block before pasting; nothing else needs editing.  If you are not sure
-which tags currently exist, leave the default: Claude can list the available
-tags for you (step 2 tells it how).
+the block before pasting; nothing else needs editing.  The sandbox is
+linux/amd64, so `kestrel-allcerts-java` (arm64 only) is not an option
+there.  If you are not sure which tags currently exist, leave the default:
+Claude can list the available tags for you (step 2 tells it how).
 
 **Then start a new Claude Cowork session and paste this:**
 
@@ -350,7 +432,9 @@ allowlist: `ghcr.io` serves the manifest and authentication token, while
 image name on the first line of the block before pasting; nothing else needs
 editing.  The largest current image needs roughly 10 GB of free disk at peak
 during this setup; allow additional headroom because image sizes change.  The
-recipe checks the sandbox's OS and architecture before downloading the image.
+recipe checks the sandbox's OS and architecture before downloading the image
+(the sandbox is amd64, so the arm64-only `kestrel-allcerts-java` image is
+not an option there).
 
 **Then paste this to a new ChatGPT Work session:**
 
@@ -614,7 +698,7 @@ Install Docker for your platform:
 
 ### Image Tags
 
-All four packages use the same tagging scheme:
+The four packages built from ACL2 master use the same tagging scheme:
 
 | Tag | Description | Git Status inside image |
 |-----|-------------|-------------------------|
@@ -628,11 +712,20 @@ the carriers of its multi-platform manifest; `acl2-kcerts-nightly` has
 `ckpt-*` tags, internal checkpoints of in-progress builds.  The nightly
 has no `commit-*` tags, since it always builds master.
 
+`kestrel-allcerts-java` is built from the `testing-kestrel` branch and
+tags differently:
+
+| Tag | Description | Git Status inside image |
+|-----|-------------|-------------------------|
+| `latest` | Most recent build of `testing-kestrel` | On `testing-kestrel` branch, `git pull origin testing-kestrel` works |
+| `abc1234` | Built from `testing-kestrel` at ACL2 commit abc1234 | On `testing-kestrel` branch, `git pull origin testing-kestrel` works |
+
 ### Verifying Image Authenticity
 
 None of the images carry a signed build attestation.  The `acl2`,
-`acl2-kcerts`, and `acl2-allcerts` packages are built on Kestrel's own
-machines, where GitHub's artifact attestations are not available; the
+`acl2-kcerts`, `acl2-allcerts`, and `kestrel-allcerts-java` packages are
+built on Kestrel's own machines, where GitHub's artifact attestations are
+not available; the
 nightly package is built entirely on GitHub-hosted runners and every step
 of each build is publicly logged in the acl2-docker repository's Actions
 history, but it is not attested at present either.  To make sure you run
@@ -789,6 +882,22 @@ make update LISP=`which sbcl`
 ```
 
 You may want to certify some books before committing the new docker image.
+
+#### The Java Image (`kestrel-allcerts-java`)
+
+This image's checkout is on the `testing-kestrel` branch with upstream
+tracking, so updating works as for master builds, with that branch in
+place of master:
+
+```bash
+cd /root/acl2
+git pull origin testing-kestrel
+make update LISP=`which sbcl`
+```
+
+As with the other certified images, this is rarely worth doing: the
+books certified in the image go stale with respect to the updated
+sources, and a newer image is built every night the branch changes.
 
 ### Checking Image Version
 
