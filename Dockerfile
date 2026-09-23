@@ -349,13 +349,6 @@ ENV PATH="${PATH}:/root/.venvs/smtlink/bin"
 # certified smtlink books and does not depend on PATH at proof time.
 RUN printf 'smt-cmd=/root/.venvs/smtlink/bin/python\n' > /root/smtlink-config
 
-# Delete each book's .cert.out file as soon as it certifies successfully.
-# This keeps disk usage down during the regression, and the .cert.out files
-# of FAILED certifications are kept (useful for debugging).  We leave this
-# set in the final image; users certifying additional books get the same
-# behavior, which keeps committed containers small.
-ENV CERT_PL_RM_OUTFILES="1"
-
 # Sanity-check both solvers exactly the way the books use them, BEFORE
 # spending hours on the regression:
 # - z3/python check mirrors books/projects/smtlink/README.md
@@ -397,6 +390,13 @@ COPY <<'EOF' /usr/local/bin/certify-books-and-clean
 # Runs the command from ${ACL2_ROOT}/books, then cleans up (see Dockerfile).
 # Strict: exits nonzero if the command fails, listing the failed books.
 set -u -o pipefail
+
+# Certification-time settings.  Exported here rather than as image ENV, so
+# the published images give cert.pl its normal behavior:
+export CERT_PL_RM_OUTFILES=1   # drop .cert.out of each book that certifies (failures keep theirs)
+export CERT_PL_TERSE=1         # short Making/Built lines: keeps a full regression under
+                               # BuildKit's 2 MiB per-step log limit (needs ACL2 from Sep 2026)
+
 cd "${ACL2_ROOT}/books"
 if "$@" 2>&1 | tee /tmp/certify.log ; then
   echo "Certification succeeded."

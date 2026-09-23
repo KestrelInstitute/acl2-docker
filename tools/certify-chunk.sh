@@ -28,6 +28,12 @@
 
 set -u -o pipefail
 
+# Certification-time settings.  Exported here rather than as image ENV, so
+# the published images give cert.pl its normal behavior:
+export CERT_PL_RM_OUTFILES=1   # drop .cert.out of each book that certifies (failures keep theirs)
+export CERT_PL_TERSE=1         # short Making/Built lines: keeps a full regression under
+                               # BuildKit's 2 MiB per-step log limit (needs ACL2 from Sep 2026)
+
 budget="${1:?usage: certify-chunk.sh BUDGET_SECONDS CERT_JOBS [TARGET]}"
 jobs="${2:?usage: certify-chunk.sh BUDGET_SECONDS CERT_JOBS [TARGET]}"
 target="${3:-regression}"

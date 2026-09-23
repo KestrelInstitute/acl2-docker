@@ -136,9 +136,6 @@ Notes:
   included book, and treats `.acl2x` files as dependencies that it would
   otherwise spend time regenerating.  If you want to see a book's proof
   output, just re-certify it in the container.
-- **`CERT_PL_RM_OUTFILES=1`** is set in the image, so books you certify
-  yourself also have their `.cert.out` deleted on success (failures keep
-  theirs, for debugging).  `unset CERT_PL_RM_OUTFILES` to change that.
 - **Agent documentation corpus** (allcerts only): the image contains
   `books/doc/agent-corpus/` — the full xdoc manual converted to one
   plain-text file per topic plus a grep-able `index.tsv`, designed for
