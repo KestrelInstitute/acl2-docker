@@ -466,7 +466,6 @@ requires ptrace.  Use this tested daemonless workflow instead:
    export USER=root
    export ACL2_ROOT=/root/acl2
    export ACL2="$setup_dir/bin/acl2"
-   export CERT_PL_RM_OUTFILES=1
    export PATH="$setup_dir/bin:/root/.venvs/smtlink/bin:$image_root/usr/local/bin:/root/acl2/bin:/root/acl2/books/build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
    export LD_LIBRARY_PATH="$image_root/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
    if [ "$#" -eq 0 ]; then

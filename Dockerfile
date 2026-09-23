@@ -241,10 +241,6 @@ COPY --from=sbcl-builder /usr/local /usr/local
 # Copy ACL2
 COPY --from=acl2-builder /root/acl2 /root/acl2
 
-# Optional: Remove .out files after book certification to save space.
-# Uncomment if disk space becomes an issue during large regressions.
-# ENV CERT_PL_RM_OUTFILES="1"
-
 # =============================================================================
 # Stage 5: Build the STP solver from source (used via 'cert-base')
 # =============================================================================
