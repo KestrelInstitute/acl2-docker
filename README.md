@@ -130,6 +130,7 @@ Build arguments (all have defaults in the Dockerfile):
 | `CERT_JOBS` | Parallel certification jobs for `kcerts`/`allcerts` (default: all cores) |
 | `SBCL_VERSION`, `SBCL_SHA256` | SBCL release to build; change both together |
 | `STP_VERSION`, `MINISAT_COMMIT` | STP release and its minisat dependency (`cert-base` and up) |
+| `CMS_VERSION`, `CADICAL_COMMIT`, `CADIBACK_COMMIT` | CryptoMiniSat release (STP's SAT solver) and the CaDiCaL and CadiBack commits it builds in (`cert-base` and up) |
 | `Z3_SOLVER_VERSION` | `z3-solver` PyPI package, which provides both `z3` and the Python bindings Smtlink uses |
 
 Resource needs:
@@ -289,16 +290,21 @@ This is also why the nightly is amd64 only.
     is everything except the `SLOW_BOOKS` list in `books/GNUmakefile`,
     which excludes a handful of very slow books and, e.g., the x86isa and
     filesystem proof developments).
-- **STP** (built from a pinned release of <https://github.com/stp/stp>),
-  used by the Axe toolkit. Axe's own `teststp.bash` sanity test is run
-  during the build, before certification starts.
+- **STP** (built from a pinned release of <https://github.com/stp/stp>,
+  with CryptoMiniSat as its default SAT solver), used by the Axe toolkit.
+  Axe's own `teststp.bash` sanity test is run during the build, before
+  certification starts.
 - **Z3 with Python bindings** (the pinned `z3-solver` package in a
   virtualenv at `/root/.venvs/smtlink`, whose `bin` is appended to `PATH`),
   used by Smtlink. The Smtlink configuration file `/root/smtlink-config`
   points at the venv's Python by absolute path and is written before
   certification, so the certified Smtlink books have it baked in.
 - Certification artifacts that are no longer needed are removed:
-  `.cert.out` (and other `.out` logs), `.cert.time`, and `workxxx` files.
+  `.cert.out` (and other `.out` logs), `.cert.time` (and other `.time`
+  files), and `workxxx` files.  Before they go, each book's certification
+  start and elapsed times are collected in
+  `/root/acl2-build-info/cert-times.lsp`, next to the build's dependency
+  information (`Makefile-*.lsp`) and a log of the certification runs.
   What remains for each book: the source, its `.cert` file, its compiled
   `.fasl` file, its `.port` file, and, where certification produces them,
   its `.acl2x` and `@expansion.lsp` files (two-pass books) and its

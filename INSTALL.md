@@ -144,10 +144,12 @@ Notes:
 - **Removed artifacts**: to keep the image (relatively) small, files not
    needed after certification were deleted: `.cert.out` proof logs (and
    the `.acl2x.out`/`.pcert*.out` logs), `.cert.time`, and `workxxx`
-   files.  Each certified book retains its source, its `.cert`, its
-   compiled `.fasl`, its `.port` file, and, where certification produces
-   them, its `.acl2x` and `@expansion.lsp` files (two-pass books) and its
-   `.pcert0`/`.pcert1` files (provisional certification).  The retained
+   files.  (How long each book took to certify, and when, is in
+   `/root/acl2-build-info/cert-times.lsp`.)  Each certified book retains
+   its source, its `.cert`, its compiled `.fasl`, its `.port` file, and,
+   where certification produces them, its `.acl2x` and `@expansion.lsp`
+   files (two-pass books) and its `.pcert0`/`.pcert1` files (provisional
+   certification).  The retained
    build-system files are needed to certify new books on top of the ones
    in the image: cert.pl loads the `.port` file of every included book,
   and treats `.acl2x` and `.pcert*` files as dependencies that it would
@@ -871,9 +873,12 @@ First get the updates:
 
 ```bash
 cd /root/acl2
-git fetch origin master
+git fetch --depth 1 origin master
 git checkout -B master origin/master
 ```
+
+Note, without the `--depth 1` the fetch downloads ACL2's whole history, which is big
+and probably not needed.
 
 After updating, rebuild the ACL2 executable if anything going into it has changed:
 

@@ -49,6 +49,10 @@ ARG SBCL_SHA256=5f2cd5bb7d3e6d9149a59c05acd8429b3be1849211769e5a37451d001e196d7f
 # Build arguments used only by the 'kcerts' and 'allcerts' targets:
 #   STP_VERSION       - STP release tag to build from source
 #   MINISAT_COMMIT    - commit of STP's minisat fork (STP build dependency)
+#   CMS_VERSION       - CryptoMiniSat release (STP's default SAT solver)
+#   CADICAL_COMMIT, CADIBACK_COMMIT
+#                     - commits of the CaDiCaL and CadiBack forks that
+#                       CryptoMiniSat builds in
 #   Z3_SOLVER_VERSION - version of the z3-solver PyPI package, which provides
 #                       both the z3 executable and the Python bindings that
 #                       Smtlink uses
@@ -244,10 +248,18 @@ COPY --from=acl2-builder /root/acl2 /root/acl2
 # =============================================================================
 # Stage 5: Build the STP solver from source (used via 'cert-base')
 # =============================================================================
-# STP is not packaged for Ubuntu, so we build it (and its minisat dependency)
-# from source.  STP is used by the Axe toolkit (books/kestrel/axe); the books
+# STP is not packaged for Ubuntu, so we build it (and its SAT solvers) from
+# source.  STP is used by the Axe toolkit (books/kestrel/axe); the books
 # build system enables the STP-dependent books when 'stp --version' works
 # (see books/build/features.sh).
+#
+# STP picks its default SAT solver when it is compiled: CryptoMiniSat if it
+# was built with it, otherwise minisat.  Axe calls stp without a solver
+# option, so it gets that default, and some Axe queries that CryptoMiniSat
+# solves in seconds take minisat several minutes.  So we build CryptoMiniSat
+# too, and configure STP with FORCE_CMS so that the build fails rather than
+# quietly falling back to minisat.  (minisat is still a required STP
+# dependency.)
 FROM ubuntu:24.04 AS stp-builder
 
 # STP release tag, and the commit of STP's minisat fork to build against.
@@ -255,6 +267,15 @@ FROM ubuntu:24.04 AS stp-builder
 ARG STP_VERSION=2.4.1
 ARG MINISAT_COMMIT=14c78206cd12d1d36b7e042fa758747c135670a4
 
+# CryptoMiniSat release, and the commits of the CaDiCaL and CadiBack forks it
+# builds in.  The CryptoMiniSat release is the one STP's own
+# scripts/deps/setup-cms.sh uses.  CryptoMiniSat would fetch the other two at
+# whatever their default branches are at build time, so we pin them.
+ARG CMS_VERSION=5.14.7
+ARG CADICAL_COMMIT=818c9562f114b315a9246ced943b66b60b38e8fb
+ARG CADIBACK_COMMIT=445ddc2f2b5e54421af64e0652c2eb8444175322
+
+# (pkg-config: CryptoMiniSat finds GMP with it)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bison \
     build-essential \
@@ -264,6 +285,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libboost-program-options-dev \
     libgmp-dev \
+    pkg-config \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -281,17 +303,44 @@ RUN git init minisat && \
     cmake --install build && \
     DESTDIR=/stage cmake --install build
 
+# Build CryptoMiniSat, as STP's setup-cms.sh does: a static library, which
+# gets linked into libstp, so nothing from it goes into /stage.  It builds
+# CaDiCaL and CadiBack itself (via CMake FetchContent); the
+# FETCHCONTENT_SOURCE_DIR_* settings point that at our pinned checkouts, and
+# FETCHCONTENT_FULLY_DISCONNECTED keeps it from downloading anything else.
+RUN for dep in cadical:${CADICAL_COMMIT} cadiback:${CADIBACK_COMMIT}; do \
+      name=${dep%%:*}; commit=${dep#*:}; \
+      git init ${name} && \
+      git -C ${name} remote add origin https://github.com/meelgroup/${name} && \
+      git -C ${name} fetch --depth 1 origin ${commit} && \
+      git -C ${name} checkout FETCH_HEAD || exit 1; \
+    done && \
+    git clone --depth 1 --branch release/v${CMS_VERSION} https://github.com/msoos/cryptominisat && \
+    cd cryptominisat && \
+    cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DENABLE_ASSERTIONS=OFF \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DSTATIC_BINARY=OFF \
+      -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+      -DFETCHCONTENT_SOURCE_DIR_CADICAL=/build/cadical \
+      -DFETCHCONTENT_SOURCE_DIR_CADIBACK=/build/cadiback && \
+    cmake --build build -j"$(nproc)" && \
+    cmake --install build
+
 # Build STP.
 # - lib/extlib-abc is a required submodule.
 # - STP_ALLOCATOR=system avoids needing the mimalloc submodule.
 # - The Python interface is not needed (Axe invokes the stp executable).
+# - FORCE_CMS: fail if CryptoMiniSat is not found (see above).
 RUN git clone --depth 1 --branch ${STP_VERSION} https://github.com/stp/stp && \
     cd stp && \
     git submodule update --init --depth 1 lib/extlib-abc && \
     cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DENABLE_PYTHON_INTERFACE=OFF \
-      -DSTP_ALLOCATOR=system && \
+      -DSTP_ALLOCATOR=system \
+      -DFORCE_CMS=ON && \
     cmake --build build -j"$(nproc)" && \
     cmake --install build && \
     DESTDIR=/stage cmake --install build && \
@@ -387,10 +436,25 @@ RUN z3 --version && \
 # - .cert.out files of successful books were already removed during the run
 #   by CERT_PL_RM_OUTFILES; failed books keep theirs, which is how the
 #   failure report below identifies them.
+# - Build information is recorded in /root/acl2-build-info before the
+#   cleanup, adding to what earlier certification runs of the same image
+#   recorded there:
+#     cert-times.lsp  each certified book's start time and elapsed time,
+#                     from the .time files that TIME_CERT makes cert.pl
+#                     write (which are then deleted with the other
+#                     artifacts)
+#     Makefile-*.lsp  the dependency information of the run, as an
+#                     S-expression: make regression's Makefile-deps.lsp,
+#                     or what cert.pl writes for "--smakefile -o
+#                     build/Makefile-<name>"
+#     cert-runs.txt   one line per run: start and end time (UTC), command
+#   It is small, and holds nothing about the build machine.  The workflows
+#   copy it out of the image as a build artifact.
 COPY <<'EOF' /usr/local/bin/certify-books-and-clean
 #!/bin/bash
 # Usage: certify-books-and-clean <certification command...>
-# Runs the command from ${ACL2_ROOT}/books, then cleans up (see Dockerfile).
+# Runs the command from ${ACL2_ROOT}/books, records certification times and
+# dependencies in /root/acl2-build-info, then cleans up (see Dockerfile).
 # Strict: exits nonzero if the command fails, listing the failed books.
 set -u -o pipefail
 
@@ -399,14 +463,77 @@ set -u -o pipefail
 export CERT_PL_RM_OUTFILES=1   # drop .cert.out of each book that certifies (failures keep theirs)
 export CERT_PL_TERSE=1         # short Making/Built lines: keeps a full regression under
                                # BuildKit's 2 MiB per-step log limit (needs ACL2 from Sep 2026)
+export TIME_CERT=1             # write foo.cert.time etc., for cert-times.lsp below
+
+info=/root/acl2-build-info
+mkdir -p "${info}"
 
 cd "${ACL2_ROOT}/books"
+start="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+touch /tmp/certify.start
 if "$@" 2>&1 | tee /tmp/certify.log ; then
   echo "Certification succeeded."
+  echo "Recording certification times and dependencies in ${info}..."
+  # One entry per .time file, merged with the entries of earlier runs.  The
+  # .time file holds bash's "time" output for the ACL2 run that certified
+  # the target, written when that run ended, so the file's modification time
+  # is the end and the start is that minus the "real" time.
+  python3 - "${info}/cert-times.lsp" <<'PY' || echo "WARNING: could not write ${info}/cert-times.lsp"
+import os, re, sys
+
+out = sys.argv[1]
+targets = ('.cert', '.pcert0', '.pcert1', '.acl2x')
+entry = re.compile(r'^\(?\("((?:[^"\\]|\\.)*)" (\d+) (\d+)\)')
+real = re.compile(r'^real\s+(\d+)m(\d+(?:\.\d+)?)s', re.M)
+
+times = {}
+if os.path.exists(out):
+    with open(out) as f:
+        for line in f:
+            m = entry.match(line.strip())
+            if m:
+                times[re.sub(r'\\(.)', r'\1', m.group(1))] = (int(m.group(2)), int(m.group(3)))
+for d, _, files in os.walk('.'):
+    for name in files:
+        target = name[:-len('.time')]
+        if not (name.endswith('.time') and target.endswith(targets)):
+            continue
+        path = os.path.join(d, name)
+        with open(path, errors='replace') as f:
+            m = real.search(f.read())
+        if not m:
+            print('warning: no "real" time in ' + path, file=sys.stderr)
+            continue
+        elapsed = round((int(m.group(1)) * 60 + float(m.group(2))) * 1000)
+        end = os.stat(path).st_mtime_ns // 1000000
+        times[os.path.normpath(os.path.join(d, target))] = (end - elapsed, elapsed)
+
+rows = sorted(times.items(), key=lambda kv: (kv[1][0], kv[0]))
+with open(out, 'w') as f:
+    f.write(
+        '; Certification times of the books certified when this image was built.\n'
+        '; Each entry is (TARGET START ELAPSED): TARGET is a certification target\n'
+        '; (a .cert file, or a .pcert0, .pcert1 or .acl2x file) relative to the\n'
+        '; books directory; START is when its certification began, in milliseconds\n'
+        '; since 1970-01-01 UTC; ELAPSED is how long it took (wall clock), in\n'
+        '; milliseconds.  Sorted by START.\n')
+    if not rows:
+        f.write('()\n')
+    for i, (t, (s, e)) in enumerate(rows):
+        t = t.replace('\\', '\\\\').replace('"', '\\"')
+        f.write(('(' if i == 0 else ' ') + '("%s" %d %d)' % (t, s, e)
+                + (')' if i == len(rows) - 1 else '') + '\n')
+print('%d entries in %s' % (len(rows), out))
+PY
+  find build -maxdepth 1 -name 'Makefile-*.lsp' -newer /tmp/certify.start \
+       -exec cp {} "${info}/" \;
+  printf '%s  %s  %s\n' "${start}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "${info}/cert-runs.txt"
+  ls -l "${info}"
   echo "Removing certification artifacts not needed by include-book..."
   find . -type f \( -name '*.cert.out' -o -name '*.acl2x.out' \
        -o -name '*.pcert0.out' -o -name '*.pcert1.out' \
-       -o -name '*.cert.time' \
+       -o -name '*.cert.time' -o -name '*.acl2x.time' \
+       -o -name '*.pcert0.time' -o -name '*.pcert1.time' \
        -o -name 'workxxx*' \) -delete
   # The manual build (doc/top, allcerts only) also creates
   # doc/manual/download/: website-distribution archives of the manual
@@ -416,7 +543,7 @@ if "$@" 2>&1 | tee /tmp/certify.log ; then
   # cleanup 'rm -rf manual' -- stranding a full extra copy of the manual
   # (~541 MB total observed).  None of it is useful inside the image.
   rm -rf doc/manual/download
-  rm -f /tmp/certify.log
+  rm -f /tmp/certify.log /tmp/certify.start
   echo "Final books directory size:"
   du -sh .
 else
@@ -447,7 +574,8 @@ ARG CERT_JOBS=
 
 RUN J="${CERT_JOBS:-$(nproc)}" && \
     echo "Certifying kestrel/top and its dependencies with -j${J}..." && \
-    certify-books-and-clean cert.pl -j "${J}" --keep-going kestrel/top
+    certify-books-and-clean cert.pl -j "${J}" --keep-going \
+      --smakefile -o build/Makefile-kcerts kestrel/top
 
 # =============================================================================
 # Stage 8: Allcerts image (build target: allcerts)

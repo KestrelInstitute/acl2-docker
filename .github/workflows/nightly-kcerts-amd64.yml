@@ -30,8 +30,9 @@
 name: Nightly kcerts amd64 (GitHub-hosted)
 
 on:
-  schedule:
-    - cron: '17 8 * * *'
+  #Pause these nightlies -- under construction
+  #schedule:
+  #  - cron: '17 8 * * *'
   workflow_dispatch:
     inputs:
       force:

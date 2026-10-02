@@ -58,6 +58,14 @@
 #                  is a detached-HEAD checkout of the requested commit, and
 #                  this turns it into a tracking branch (default testing-kestrel)
 #   CERT_JOBS    - parallel certification jobs (default: all cores)
+#   REGRESSION_BOOKS - for a QUICK TEST of this build only: books to certify
+#                  (with cert.pl) in place of the full regression, e.g.
+#                  "kestrel/axe/top".  The Axe JVM examples are still
+#                  certified, but the agent corpus is skipped, since it is
+#                  made from the manual that only the full regression
+#                  builds.  Default blank: the full regression and the
+#                  corpus.  Never publish such an image as
+#                  kestrel-allcerts-java.
 #   JDK_VERSION  - Ubuntu OpenJDK package version to install (default 17)
 #   ASSETS_URL   - where the two Java assets are downloaded from (default:
 #                  the java-assets-1 release of this repository)
@@ -142,28 +150,44 @@ LABEL org.opencontainers.image.title="ACL2 (all regression books certified) with
 LABEL org.opencontainers.image.description="ACL2 theorem prover built on SBCL from the testing-kestrel branch, with all regression books and the Axe JVM examples certified, the STP and Z3 solvers, a JDK, and the Java bootstrap classes"
 
 ARG CERT_JOBS=
+ARG REGRESSION_BOOKS=
 
 # The standard regression, exactly as the 'allcerts' target does it (strict;
 # make -k so every failing book is reported; artifacts cleaned up in the
-# same layer).  This is the long step.
+# same layer).  This is the long step.  (A quick test build certifies just
+# REGRESSION_BOOKS instead; see the header.)
 RUN J="${CERT_JOBS:-$(nproc)}" && \
-    echo "Certifying the full regression suite with -j${J}..." && \
-    certify-books-and-clean make -j"${J}" regression ACL2="${ACL2}"
+    if [ -z "${REGRESSION_BOOKS}" ]; then \
+      echo "Certifying the full regression suite with -j${J}..." && \
+      certify-books-and-clean make -j"${J}" regression ACL2="${ACL2}"; \
+    else \
+      echo "QUICK TEST BUILD: certifying only ${REGRESSION_BOOKS} with -j${J}..." && \
+      certify-books-and-clean cert.pl -j "${J}" --keep-going \
+        --smakefile -o build/Makefile-quick-test ${REGRESSION_BOOKS}; \
+    fi
 
 # The Axe JVM examples, which the regression excludes.  Their top books
 # list the example books in a comment that the dependency scanner reads,
 # so certifying the two tops certifies every example.  A separate layer, so
-# a failure here does not discard the regression above.
+# a failure here does not discard the regression above.  (Its dependency
+# information goes in build/Makefile-jvm-examples.lsp, and from there into
+# /root/acl2-build-info; see certify-books-and-clean in the main Dockerfile.)
 RUN J="${CERT_JOBS:-$(nproc)}" && \
     echo "Certifying the Axe JVM examples with -j${J}..." && \
     certify-books-and-clean cert.pl -j "${J}" --keep-going \
+      --smakefile -o build/Makefile-jvm-examples \
       kestrel/axe/jvm/examples/formal-unit-tests/top \
       kestrel/axe/jvm/examples/crypto/top
 
 # Agent documentation corpus, as in the 'allcerts' target (see tools/DESIGN.md).
+# Not in a quick test build, which has no manual to make it from.
 COPY tools/xdoc_extract.py /usr/local/bin/xdoc_extract.py
-RUN python3 /usr/local/bin/xdoc_extract.py books/doc/manual books/doc/agent-corpus && \
-    du -sh books/doc/agent-corpus
+RUN if [ -z "${REGRESSION_BOOKS}" ]; then \
+      python3 /usr/local/bin/xdoc_extract.py books/doc/manual books/doc/agent-corpus && \
+      du -sh books/doc/agent-corpus; \
+    else \
+      echo "QUICK TEST BUILD: no agent corpus."; \
+    fi
 
 # Start ACL2 by default, like every other image (explicit, in case the base
 # image was tagged from a container whose command overrode it).
