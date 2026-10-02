@@ -1,7 +1,7 @@
 # ACL2 Docker Images
 
 Prebuilt Docker images of the [ACL2](https://www.cs.utexas.edu/~moore/acl2/)
-theorem prover on SBCL, published to the GitHub Container Registry in four
+theorem prover on SBCL, published to the GitHub Container Registry in five
 packages.
 
 > [!IMPORTANT]
@@ -20,6 +20,10 @@ enough detail to reproduce either.
 - `Dockerfile` — a multi-stage build that compiles SBCL and ACL2 from
   source.  Its build targets are `runtime` (lean), `cert-base` (solvers
   installed, no books certified), `kcerts`, and `allcerts`.
+- `Dockerfile.allcerts-with-java` — the `kestrel-allcerts-java` image:
+  starts from the main Dockerfile's `cert-base`, adds a JDK and the Java
+  assets the Axe JVM tools read, and certifies the regression plus the
+  Axe JVM examples (its header comment explains the two-step build).
 - `INSTALL.md` — installing and running the images, including from Claude
   Cowork and ChatGPT Work cloud sessions.
 - `.github/workflows/` — the nightly build that runs on GitHub-hosted
@@ -27,23 +31,25 @@ enough detail to reproduce either.
   `allcerts-chunked.yml` it calls (with `.github/actions/certify-chunk`
   and `tools/certify-chunk.sh`), which fits a long certification into
   GitHub's per-job time limit.
-- `examples/` — snapshots of the GitHub Actions workflows behind the other
-  three packages, plus the self-hosted runner setup guides they rely on.
-  These are reference material, not active workflows.
+- `examples/` — snapshots of the GitHub Actions workflows behind the
+  `acl2`, `acl2-kcerts`, `acl2-allcerts`, and `kestrel-allcerts-java`
+  packages, plus the self-hosted runner setup guides they rely on.  These
+  are reference material, not active workflows.
 - `tools/` — also holds the extractor that turns the built xdoc manual
   into the agent-friendly documentation corpus shipped in the `allcerts`
   image (see [tools/DESIGN.md](tools/DESIGN.md)).
 
-## The Four Images
+## The Five Images
 
 | Image | Platforms | Contents | Rebuilt |
 |-------|-----------|----------|---------|
 | `ghcr.io/kestrelinstitute/acl2` | linux/amd64 + linux/arm64 | SBCL + ACL2 + books as source (not certified) | by hand, occasionally |
 | `ghcr.io/kestrelinstitute/acl2-kcerts` | linux/amd64 + linux/arm64 | Everything in the lean image, **plus all books reachable from `kestrel/top` certified**, plus the **STP** solver (for Axe) and **Z3** (for Smtlink) | by hand, occasionally |
 | `ghcr.io/kestrelinstitute/acl2-allcerts` | linux/amd64 only | Everything in the lean image, **plus all books of the standard `make regression` suite certified**, plus **STP** and **Z3**, plus the xdoc agent corpus | by hand, occasionally |
-| `ghcr.io/kestrelinstitute/acl2-kcerts-nightly` | linux/amd64 only | The same contents as `acl2-kcerts` | **every night** that ACL2 master has changed |
+| `ghcr.io/kestrelinstitute/acl2-kcerts-nightly` | linux/amd64 only | The same contents as `acl2-kcerts` | every night that ACL2 master has changed — **paused at present** |
+| `ghcr.io/kestrelinstitute/kestrel-allcerts-java` | linux/amd64 + linux/arm64 | The contents of `acl2-allcerts`, but from ACL2's `testing-kestrel` branch, **plus the Axe JVM examples certified**, plus a JDK and the Java class library the Axe JVM tools read | **every night** that `testing-kestrel` has changed |
 
-All four use the same Dockerfile.  The lean image is the `runtime` build
+The first four use the same Dockerfile.  The lean image is the `runtime` build
 target; `cert-base` extends `runtime` with the solvers; `kcerts` extends
 `cert-base` by certifying the `kestrel/top` tree; and `allcerts` extends
 `kcerts` — its regression skips the already-certified kestrel books and
@@ -54,14 +60,18 @@ their kestrel layers, and pulling both costs little more than pulling
 allcerts alone.  The nightly builds `cert-base` and certifies the same
 book set as `kcerts`, but does so in checkpointed steps on GitHub-hosted
 runners (see "Automating Builds" below), so its layers are its own — it
-shares content, not layers, with `acl2-kcerts`.  The images with certified
+shares content, not layers, with `acl2-kcerts`.  `kestrel-allcerts-java`
+is built by `Dockerfile.allcerts-with-java` on top of the main
+Dockerfile's `cert-base` (built from `testing-kestrel`), so it shares no
+certified layers with the others.  The images with certified
 books are much larger than the lean one because they contain the `.cert`
 files and compiled books for their book sets; artifacts not needed by
 `include-book` (such as `.cert.out` files) are removed during the build.
 
 ### Image Tagging
 
-All images use the same tagging scheme (in their respective packages):
+All images except `kestrel-allcerts-java` use the same tagging scheme (in
+their respective packages):
 
 - **Master build (the default)**: tagged `master-abc1234` AND `latest`
   - Git is set up for easy updates: `git pull origin master`
@@ -76,10 +86,17 @@ and can be ignored.  The nightly package has no `commit-*` tags (it always
 builds master) and additionally holds `ckpt-*` tags — internal checkpoints
 of in-progress builds — which can likewise be ignored.
 
+`kestrel-allcerts-java` is built from the `testing-kestrel` branch and is
+tagged with the 7-character ACL2 commit (`abc1234`), plus `latest` for
+each build of the branch head; git inside the image is set up for
+`git pull origin testing-kestrel`.  Its per-architecture carrier tags are
+`abc1234-amd64` and `abc1234-arm64`.
+
 ### Builds are Strict
 
 If any book fails to certify, a build with certified books (kcerts,
-allcerts, or the nightly) **fails and no image tag is published** — the
+allcerts, kestrel-allcerts-java, or the nightly) **fails and no image tag
+is published** — the
 nightly pushes only its internal `ckpt-*` checkpoint in that case, never
 `master-*` or `latest`.  Certification runs with keep-going (`make -k` /
 `cert.pl --keep-going`), so all failing books are reported in one run: the
@@ -121,6 +138,11 @@ docker build --target kcerts --build-arg CERT_JOBS=8 -t acl2-kcerts .
 docker build --target allcerts --build-arg CERT_JOBS=8 -t acl2-allcerts .
 ```
 
+The Java image is a two-step build — `cert-base` from this Dockerfile,
+then `Dockerfile.allcerts-with-java` on top of it; the commands, and its
+own build arguments (including `REGRESSION_BOOKS`, for a quick test build
+that certifies only a few books), are in that file's header comment.
+
 Build arguments (all have defaults in the Dockerfile):
 
 | Argument | Meaning |
@@ -148,7 +170,8 @@ Resource needs:
   further 55 minutes (much of that time most cores are idle, waiting on
   dependencies).  On a 4-core, 16 GB machine at `CERT_JOBS=3`, `kcerts`
   takes about 2¼ hours, and the full `allcerts` regression would take
-  roughly 10.
+  roughly 10.  On an Apple M5 MacBook Air with Docker Desktop given 4 CPUs
+  and 21 GB, the whole regression takes about 4 hours at `CERT_JOBS=4`.
 - **arm64 needs Apple Silicon.** See "Why Apple Silicon for ARM64?" below.
   On a Mac, `docker build` produces a native linux/arm64 image.
 
@@ -156,14 +179,15 @@ Resource needs:
 
 We build the published images two ways, and document both so that anyone
 can reproduce either: a scheduled workflow in this public repository that
-runs on GitHub's free hosted runners, and hand-dispatched workflows in a
-private companion repository that run on our own self-hosted machines.
+runs on GitHub's free hosted runners, and workflows in a private
+companion repository that run on our own self-hosted machines (dispatched
+by hand, except the nightly `kestrel-allcerts-java` build).
 The trade-offs:
 
 |  | GitHub-hosted runners, public repo | Self-hosted runners, private repo |
 |--|-----------------------------------|-----------------------------------|
-| Used for | `acl2-kcerts-nightly` | `acl2`, `acl2-kcerts`, `acl2-allcerts` |
-| Trigger | schedule (nightly), or by hand | by hand |
+| Used for | `acl2-kcerts-nightly` | `acl2`, `acl2-kcerts`, `acl2-allcerts`, `kestrel-allcerts-java` |
+| Trigger | schedule (nightly; paused at present), or by hand | by hand (`kestrel-allcerts-java`: nightly, or by hand) |
 | Cost | free and unmetered for public repositories | your own hardware |
 | Machine | 4 vCPUs, 16 GB RAM, ~20 GB free disk (~50 GB after the workflow removes preinstalled SDKs) | whatever you own (ours: a 32-core, 128 GB server; an Apple Silicon Mac) |
 | Per-job limit | 6 hours — long certifications must be split (see below) | none in practice (5 days) |
@@ -179,8 +203,10 @@ Choose self-hosted when you need arm64, big machines, or fast turnaround.
 ### Style 1: GitHub-hosted runners (the nightly)
 
 The `acl2-kcerts-nightly` package tracks ACL2 master.
-`nightly-kcerts-amd64.yml` runs every night (00:17 Pacific standard time),
-and first compares ACL2 master's current commit with the one in the last
+`nightly-kcerts-amd64.yml` is scheduled every night (00:17 Pacific
+standard time) — though its schedule is **paused at present**, so it runs
+only when dispatched by hand — and each run first compares ACL2 master's
+current commit with the one in the last
 pushed nightly; when nothing has changed, the run ends there, at a cost of
 a few seconds.  Otherwise it builds SBCL + that ACL2 master, certifies the
 `kestrel/top` book set — the kcerts image contents — and pushes the result
@@ -223,13 +249,20 @@ workflow, the `.github/actions/certify-chunk` composite action, and
 like `nightly-kcerts-amd64.yml`.  For the kestrel set one chunk suffices;
 the full regression would take two or three.
 
-### Style 2: Self-hosted runners from a private repository (the dispatched builds)
+### Style 2: Self-hosted runners from a private repository
 
 Each of the `acl2`, `acl2-kcerts`, and `acl2-allcerts` packages has a
 GitHub Actions workflow that is triggered by hand (`workflow_dispatch`
 only), takes an ACL2 ref and a parallelism setting as inputs, builds the
 corresponding Dockerfile target, and pushes it under the tags described
-above.  The jobs run on:
+above.  The `kestrel-allcerts-java` workflow is the same kind, but also
+runs nightly (11:14 UTC), building the `testing-kestrel` head when it has
+moved since the last pushed `latest`.  It saves each build's
+certification times and dependency information (see "What's in the
+images with certified books" below) as build artifacts, and has a
+quick-test mode that certifies only `kestrel/axe/top` and pushes to a
+separate test package, for trying Dockerfile changes on both platforms.
+The jobs run on:
 
 | Job | Runner |
 |-----|--------|
@@ -238,6 +271,8 @@ above.  The jobs run on:
 | kcerts amd64 | Self-hosted Ubuntu x86-64 server |
 | kcerts arm64 | Self-hosted Apple Silicon Mac |
 | allcerts amd64 | Self-hosted Ubuntu x86-64 server |
+| kestrel-allcerts-java amd64 | Self-hosted Ubuntu x86-64 server |
+| kestrel-allcerts-java arm64 | Self-hosted Apple Silicon Mac |
 
 The workflows live in a private repository rather than here because Actions logs
 of a public repository reveal various details of the self-hosted runner
@@ -246,7 +281,7 @@ and build from it, so this repository remains the complete description of the
 images.  Kestrel staff who need to trigger a build or set up a runner should
 look there.
 
-For everyone else, snapshots of the three workflows are kept in
+For everyone else, snapshots of these four workflows are kept in
 [examples/workflows/](examples/workflows/) as examples of what someone
 else could set up — for instance, to build and publish these images for
 their own organization.  They sit outside `.github/workflows/`, so GitHub
@@ -263,7 +298,7 @@ live workflows there may drift ahead of these copies.
 ### Attestations
 
 None of the images are signed with GitHub artifact attestations.  For the
-dispatched builds the feature is unavailable in principle (it requires
+self-hosted builds the feature is unavailable in principle (it requires
 GitHub-hosted runners in a public repository, which self-hosted builds can
 never be); the nightly runs in exactly the setting attestations require
 and could adopt them, but does not at present — its runs are publicly
@@ -290,6 +325,9 @@ This is also why the nightly is amd64 only.
     is everything except the `SLOW_BOOKS` list in `books/GNUmakefile`,
     which excludes a handful of very slow books and, e.g., the x86isa and
     filesystem proof developments).
+  - **kestrel-allcerts-java**: the same regression (from `testing-kestrel`),
+    plus the books under `kestrel/axe/jvm/examples`, which the regression
+    excludes because they need the Java assets that only this image has.
 - **STP** (built from a pinned release of <https://github.com/stp/stp>,
   with CryptoMiniSat as its default SAT solver), used by the Axe toolkit.
   Axe's own `teststp.bash` sanity test is run during the build, before
@@ -305,6 +343,8 @@ This is also why the nightly is amd64 only.
   start and elapsed times are collected in
   `/root/acl2-build-info/cert-times.lsp`, next to the build's dependency
   information (`Makefile-*.lsp`) and a log of the certification runs.
+  (The nightly certifies with `tools/certify-chunk.sh` instead, so it has
+  no `/root/acl2-build-info`.)
   What remains for each book: the source, its `.cert` file, its compiled
   `.fasl` file, its `.port` file, and, where certification produces them,
   its `.acl2x` and `@expansion.lsp` files (two-pass books) and its

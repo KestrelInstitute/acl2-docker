@@ -1,0 +1,834 @@
+# ============================================================================
+# EXAMPLE ONLY -- NOT AN ACTIVE WORKFLOW
+#
+# GitHub only runs workflows from .github/workflows/, so this file, kept
+# under examples/workflows/, cannot be dispatched from this repository.
+# It is a snapshot of a workflow we run from a private CI repository
+# against our own self-hosted runners, preserved here as an example of
+# how someone else could set up the same build.
+#
+# To adapt it for your own repository:
+#   - copy it into .github/workflows/
+#   - set up self-hosted runner(s) with matching labels; see the
+#     RUNNER-SETUP-*.md guides in examples/
+#   - change the registry organization in the image names
+#     (ghcr.io/kestrelinstitute/...) to your own
+#   - set PUBLIC_REPO to the repository that holds the Dockerfiles: this
+#     workflow checks that repository out, so it can run from a separate
+#     CI repository
+#   - run it from a PRIVATE repository: its run logs and its
+#     build-information artifacts describe the self-hosted runners
+# ============================================================================
+
+# Build the kestrel-allcerts-java Docker Image (Multi-Platform, self-hosted)
+#
+# Builds the 'allcerts-java' target of Dockerfile.allcerts-with-java in the
+# public acl2-docker repository, for linux/amd64 and linux/arm64:
+#   - SBCL + ACL2 from the 'testing-kestrel' branch (Kestrel's development
+#     branch; synced with master roughly daily) -- via the main Dockerfile's
+#     'cert-base' target, built first and used as the base
+#   - STP (for Axe) and Z3 (for Smtlink)
+#   - a JDK, the Java bootstrap classes (rt.jar from Azul Zulu 7 / OpenJDK
+#     7u352, unzipped), and the Bouncy Castle jar the Axe crypto examples
+#     verify
+#   - all books of the standard "make regression" suite certified, PLUS the
+#     kestrel/axe/jvm/examples books (excluded from the regression because
+#     they need the Java assets)
+#   - the xdoc agent corpus
+#
+# Both platforms are built on self-hosted runners, at the same time (a full
+# regression does not fit GitHub-hosted runners, and GitHub's arm64 runners
+# lack the floating-point traps ACL2 needs):
+#   - linux/amd64 on the self-hosted Ubuntu x86-64 runner
+#     (see RUNNER-SETUP-UBUNTU-AMD64.md; labels: self-hosted, Linux, X64)
+#   - linux/arm64 on the self-hosted Apple Silicon Mac runner
+#     (see RUNNER-SETUP-MACOS-ARM64.md; labels: self-hosted, macOS, ARM64)
+#     Give Docker Desktop most of the Mac's memory (this is a full
+#     regression, ~28 CPU-hours of book work), and if that is less than
+#     about 4 GB per CPU Docker Desktop has, set a modest cert_jobs.
+#
+# Each platform is pushed to ghcr.io/kestrelinstitute/kestrel-allcerts-java
+# under an architecture-suffixed tag (<acl2-sha>-amd64, <acl2-sha>-arm64,
+# with the 7-character ACL2 commit), and the two are then combined into a
+# multi-platform manifest tagged <acl2-sha> and, for a default build of the
+# development branch, 'latest'.  The package is meant to be PUBLIC; ghcr.io
+# creates a new package as private on its first push, so the summary job
+# checks anonymously whether the image can be pulled and says what to do if
+# not.
+#
+# This pushes to the same package, and the same 'latest', as
+# docker-allcerts-java-arm64-selfhosted.yml, which it replaces.  Do not run
+# both on a schedule: each would replace the other's 'latest' (arm64-only
+# vs. multi-platform), and the Mac would build the arm64 image twice.  The
+# arm64-only workflow's schedule is therefore commented out.
+#
+# Java assets: both are downloaded by the Dockerfile itself from the
+# 'java-assets-1' release of the public acl2-docker repository (whose
+# release notes record where each file came from) and verified against
+# pinned checksums; nothing has to be staged for this workflow.  The rt.jar
+# is only read as class files, so the same asset serves both platforms.
+#
+# QUICK TEST: dispatching with quick_test checked builds the same image but
+# certifies only QUICK_TEST_BOOKS (below) in place of the full regression
+# (the Axe JVM examples are still certified; the agent corpus is skipped),
+# and pushes it to kestrel-allcerts-java-test instead (TEST_IMAGE_NAME), so
+# it can never replace a real kestrel-allcerts-java image.  It always builds
+# (the last-push comparison is skipped).  Use it to try a Dockerfile change
+# on both platforms in a fraction of the time; delete the test package's
+# versions when done.  ghcr.io creates that package private on its first
+# push: 'docker login ghcr.io' to pull it.
+#
+# BUILD INFORMATION: each build job saves an artifact of this run named
+# <image>-build-info-<acl2-sha>-<arch> (e.g.
+# kestrel-allcerts-java-build-info-abc1234-amd64), holding the image's
+# /root/acl2-build-info directory (cert-times.lsp: each book's certification
+# start and elapsed times; Makefile-*.lsp: the dependency information;
+# cert-runs.txt; see certify-books-and-clean in the main Dockerfile) and a
+# build-info.txt describing the build, the image's tools, and the runner.
+# The runner description is why it is a run artifact and not part of the
+# public image; artifacts are only as private as the repository that runs
+# the workflow.
+#
+# The build is STRICT: if any book fails to certify, that platform's build
+# fails and no manifest is pushed.  Certification runs with keep-going
+# (make -k, cert.pl --keep-going), so all failures are reported in one run;
+# failed books are listed at the end of the build log.
+#
+# Note: images built on self-hosted runners do not get SLSA attestation.
+
+# We run this workflow from a private CI repository, so that run logs,
+# artifacts and runner details are not public.  It checks out the public
+# repository that holds the Dockerfiles (PUBLIC_REPO) at the ref given by
+# the docker_ref input and builds from that.
+#
+# It runs nightly as well as on dispatch.  For the nightly to work:
+# - Both runners must be LISTENING when the schedule fires.  For the Mac: run
+#   it as a launchd service (./svc.sh install), have Docker Desktop start at
+#   login, keep the Mac logged in, and disable sleep.  For the Ubuntu runner:
+#   sudo ./svc.sh install && sudo ./svc.sh start.  A job whose runner is
+#   offline waits as "Queued" for 24 hours and is then cancelled.
+# - Registry logins on the Mac must not go through the macOS keychain, which
+#   an unattended runner cannot use; the arm64 job gives itself a job-local
+#   Docker config for that (see the step before its login).
+# - Schedules only fire from the default branch of this repository.
+# - A cheap check on a GitHub-hosted runner compares the commit to build with
+#   the org.opencontainers.image.revision labels of the pushed 'latest' and
+#   skips the build when 'latest' already has both platforms built from that
+#   commit, so the runners are not touched on nights when testing-kestrel has
+#   not moved.
+
+name: Build kestrel-allcerts-java Docker (Multi-Platform, self-hosted)
+
+on:
+  # Nightly at 11:14 UTC (03:14 PST / 04:14 PDT).  Cron is always UTC here.
+  # A scheduled run behaves like a dispatch with every input left at its
+  # default: testing-kestrel, acl2-docker main, all cores, push on, not a
+  # quick test.  It is skipped when testing-kestrel has not moved since the
+  # last pushed multi-platform 'latest'.
+  schedule:
+    - cron: '14 11 * * *'
+  workflow_dispatch:
+    inputs:
+      docker_ref:
+        description: 'Ref/commit of the public acl2-docker repo to build from (branch, tag or SHA)'
+        required: false
+        default: 'main'
+      acl2_ref:
+        description: 'ACL2 branch or commit to build (default: testing-kestrel)'
+        required: false
+        default: 'testing-kestrel'
+      additional_tag:
+        description: 'Extra tag (usually left blank)'
+        required: false
+        default: ''
+      cert_jobs:
+        description: 'Parallel certification jobs (blank = all cores on each runner)'
+        required: false
+        default: ''
+      push_to_registry:
+        description: 'Push to registry?'
+        type: boolean
+        default: true
+      force:
+        description: 'Build even if latest already has both platforms built from the requested commit'
+        type: boolean
+        default: false
+      quick_test:
+        description: 'Quick test: certify only kestrel/axe/top (plus the JVM examples), no corpus, push to kestrel-allcerts-java-test'
+        type: boolean
+        default: false
+
+env:
+  PUBLIC_REPO: KestrelInstitute/acl2-docker
+  # Never upload the .dockerbuild build record; it names runner paths.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: kestrelinstitute/kestrel-allcerts-java
+  # For quick_test (see the header): where the image goes, and the books
+  # certified in place of the full regression.
+  TEST_IMAGE_NAME: kestrelinstitute/kestrel-allcerts-java-test
+  QUICK_TEST_BOOKS: kestrel/axe/top
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ==========================================================================
+  # Job 1: Resolve ACL2 commit hash
+  # ==========================================================================
+  resolve-commit:
+    runs-on: ubuntu-latest
+    # On a scheduled run the 'inputs' context is empty, so every input used
+    # below and in the other jobs is defaulted here, once, into outputs.
+    outputs:
+      acl2_commit: ${{ steps.resolve.outputs.commit }}
+      acl2_commit_short: ${{ steps.resolve.outputs.commit_short }}
+      acl2_branch: ${{ steps.resolve.outputs.branch }}
+      default_build: ${{ steps.resolve.outputs.default_build }}
+      push: ${{ steps.resolve.outputs.push }}
+      quick_test: ${{ steps.resolve.outputs.quick_test }}
+      image_name: ${{ steps.resolve.outputs.image_name }}
+      docker_ref: ${{ steps.resolve.outputs.docker_ref }}
+      docker_commit: ${{ steps.resolve.outputs.docker_commit }}
+      regression_books: ${{ steps.resolve.outputs.regression_books }}
+      build_needed: ${{ steps.compare.outputs.build_needed }}
+    steps:
+      - name: Resolve ACL2 commit hash
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REF="${{ inputs.acl2_ref }}"
+          [ -z "$REF" ] && REF="testing-kestrel"
+          echo "Resolving ref: ${REF}"
+
+          # Push unless a dispatch explicitly said not to (scheduled runs
+          # have no inputs and always push).
+          PUSH="${{ github.event_name == 'schedule' || inputs.push_to_registry }}"
+          echo "push=${PUSH}" >> $GITHUB_OUTPUT
+
+          # Branches and tags are resolved with git ls-remote, which is not
+          # subject to the REST API's rate limit.  (Anonymous API calls share
+          # a 60-per-hour limit with every other runner behind the same IP.)
+          # Only an abbreviated commit needs the API, and that call is
+          # authenticated.
+          ACL2_REPO="https://github.com/acl2/acl2.git"
+          COMMIT=""
+          if echo "$REF" | grep -qE '^[0-9a-f]{40}$'; then
+            COMMIT="$REF"
+          elif echo "$REF" | grep -qE '^[0-9a-f]{7,39}$'; then
+            RESPONSE=$(curl -sL -H "Authorization: Bearer ${GH_TOKEN}" \
+                            -H "Accept: application/vnd.github+json" \
+                            "https://api.github.com/repos/acl2/acl2/commits/${REF}")
+            COMMIT=$(echo "$RESPONSE" | jq -r '.sha // empty')
+            [ -z "$COMMIT" ] && echo "API response: $RESPONSE"
+          else
+            REFS=$(git ls-remote "$ACL2_REPO" "refs/heads/${REF}" "refs/tags/${REF}" "refs/tags/${REF}^{}")
+            # prefer a branch; for an annotated tag, the peeled (^{}) line is the commit
+            for pattern in "refs/heads/${REF}" "refs/tags/${REF}^{}" "refs/tags/${REF}"; do
+              COMMIT=$(echo "$REFS" | awk -v p="$pattern" '$2 == p { print $1; exit }')
+              [ -n "$COMMIT" ] && break
+            done
+          fi
+
+          if [ -z "$COMMIT" ]; then
+            echo "::error::Failed to resolve ACL2 ref '${REF}' (not a branch, tag or commit of acl2/acl2?)"
+            exit 1
+          fi
+
+          # The image sets up a local branch tracking the development branch
+          # so 'git pull' works inside it.  If a raw commit was requested,
+          # still call the branch testing-kestrel.
+          if echo "$REF" | grep -qE '^[0-9a-f]{7,40}$'; then
+            BRANCH="testing-kestrel"
+          else
+            BRANCH="$REF"
+          fi
+
+          DEFAULT_BUILD=false
+          if [ "$REF" = "testing-kestrel" ]; then DEFAULT_BUILD=true; fi
+
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "commit_short=${COMMIT:0:7}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "default_build=${DEFAULT_BUILD}" >> $GITHUB_OUTPUT
+          echo "Resolved ${REF} to ${COMMIT} (branch ${BRANCH}, default build: ${DEFAULT_BUILD})"
+
+          # The acl2-docker commit to build from, resolved once here so that
+          # both build jobs check out the same commit, and so that it can be
+          # recorded: on a runner without git (e.g. a Mac without the Xcode
+          # command line tools), the checkout is a REST API download without
+          # git metadata.
+          DOCKER_REF="${{ inputs.docker_ref }}"
+          [ -z "$DOCKER_REF" ] && DOCKER_REF="main"
+          DOCKER_COMMIT=$(curl -sL -H "Authorization: Bearer ${GH_TOKEN}" \
+                               -H "Accept: application/vnd.github+json" \
+                               "https://api.github.com/repos/${PUBLIC_REPO}/commits/${DOCKER_REF}" \
+                          | jq -r '.sha // empty')
+          if [ -z "$DOCKER_COMMIT" ]; then
+            echo "::error::Failed to resolve acl2-docker ref '${DOCKER_REF}' (not a branch, tag or commit of ${PUBLIC_REPO}?)"
+            exit 1
+          fi
+          echo "docker_ref=${DOCKER_REF}" >> $GITHUB_OUTPUT
+          echo "docker_commit=${DOCKER_COMMIT}" >> $GITHUB_OUTPUT
+          echo "Building from ${PUBLIC_REPO} ${DOCKER_REF} = ${DOCKER_COMMIT}"
+
+          # The image name and the reduced book list are decided together,
+          # here and nowhere else, so that a quick test build can only ever
+          # be pushed to the test package.
+          if [ "${{ inputs.quick_test || false }}" = "true" ]; then
+            echo "quick_test=true" >> $GITHUB_OUTPUT
+            echo "image_name=${TEST_IMAGE_NAME}" >> $GITHUB_OUTPUT
+            echo "regression_books=${QUICK_TEST_BOOKS}" >> $GITHUB_OUTPUT
+            echo "QUICK TEST: certifying ${QUICK_TEST_BOOKS} instead of the regression; image ${TEST_IMAGE_NAME}"
+          else
+            echo "quick_test=false" >> $GITHUB_OUTPUT
+            echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+            echo "regression_books=" >> $GITHUB_OUTPUT
+          fi
+
+      # Is there anything new to build?  The commits the pushed 'latest' was
+      # built from are read from its org.opencontainers.image.revision labels
+      # straight from the registry (the package is public; no login, no
+      # pull).  '{{json .Image}}' is a single image config for a
+      # single-platform 'latest' (as the arm64-only workflow pushes) and a
+      # map from platform to config for a multi-platform one; the build is
+      # skipped only when 'latest' has BOTH platforms, each built from the
+      # requested commit.  Only a default build can be skipped: a build of
+      # some other ref, or with push off, or with force or quick_test set,
+      # always runs.
+      - name: Compare with the last pushed image
+        id: compare
+        run: |
+          set -eu
+          if [ "${{ steps.resolve.outputs.quick_test }}" = "true" ]; then
+            echo "Quick test: always build."
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          commit="${{ steps.resolve.outputs.commit }}"
+          image="${REGISTRY}/${{ steps.resolve.outputs.image_name }}:latest"
+          revisions=$(docker buildx imagetools inspect "${image}" --format '{{json .Image}}' 2>/dev/null \
+                      | jq -c 'if has("config") then {"single-platform": .config.Labels["org.opencontainers.image.revision"]}
+                               else with_entries(.value = .value.config.Labels["org.opencontainers.image.revision"]) end' \
+                      2>/dev/null || true)
+          if [ -n "${revisions}" ]; then
+            echo "latest was built from: ${revisions}"
+          else
+            echo "No pushed 'latest' found (or its revision labels are unreadable)."
+            revisions='{}'
+          fi
+          up_to_date=$(echo "${revisions}" | jq --arg c "${commit}" \
+                         '.["linux/amd64"] == $c and .["linux/arm64"] == $c')
+          if [ "${up_to_date}" = "true" ] \
+             && [ "${{ steps.resolve.outputs.default_build }}" = "true" ] \
+             && [ "${{ steps.resolve.outputs.push }}" = "true" ] \
+             && [ "${{ inputs.force || false }}" != "true" ]; then
+            echo "testing-kestrel is unchanged since the last multi-platform push; skipping the build."
+            echo "build_needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+          fi
+
+  # ==========================================================================
+  # Job 2: Build amd64 image (self-hosted Ubuntu x86-64 runner)
+  # ==========================================================================
+  build-amd64:
+    needs: resolve-commit
+    if: ${{ needs.resolve-commit.outputs.build_needed == 'true' }}
+    runs-on: [self-hosted, Linux, X64]
+    # A full regression plus the Java examples; allow for a cold Docker cache.
+    timeout-minutes: 2880
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.PUBLIC_REPO }}
+          ref: ${{ needs.resolve-commit.outputs.docker_commit }}
+
+      # 'docker' driver: layers are cached in the runner's Docker daemon
+      # across builds (SBCL, STP, and the JDK layers rarely change), and step
+      # 1's image is visible to step 2 by name without a push.  Run
+      # "docker system prune" on the runner occasionally.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 1 of the two-step build: the base (SBCL + ACL2 + solvers, no
+      # books certified) from the main Dockerfile.  Not pushed; it stays in
+      # the daemon for step 2.
+      - name: Build the cert-base image (main Dockerfile)
+        uses: docker/build-push-action@v7
+        with:
+          provenance: false
+          context: .
+          file: ./Dockerfile
+          target: cert-base
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: acl2-cert-base:build
+          build-args: |
+            ACL2_COMMIT=${{ needs.resolve-commit.outputs.acl2_commit }}
+            ACL2_BUILD_TYPE=commit
+
+      # Step 2: Java tooling and the (downloaded, checksummed) Java assets,
+      # then the regression and the Axe JVM examples, then the corpus.
+      - name: Build and push amd64 image (arch-suffixed tag)
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          # keep pushes as plain manifests (v6+ defaults provenance on for pushes)
+          provenance: false
+          context: .
+          file: ./Dockerfile.allcerts-with-java
+          target: allcerts-java
+          platforms: linux/amd64
+          push: ${{ needs.resolve-commit.outputs.push == 'true' }}
+          tags: ${{ env.REGISTRY }}/${{ needs.resolve-commit.outputs.image_name }}:${{ needs.resolve-commit.outputs.acl2_commit_short }}-amd64
+          build-args: |
+            BASE_IMAGE=acl2-cert-base:build
+            ACL2_BRANCH=${{ needs.resolve-commit.outputs.acl2_branch }}
+            CERT_JOBS=${{ inputs.cert_jobs }}
+            REGRESSION_BOOKS=${{ needs.resolve-commit.outputs.regression_books }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-commit.outputs.acl2_commit }}
+            org.opencontainers.image.source=https://github.com/acl2/acl2
+            org.opencontainers.image.description=${{ needs.resolve-commit.outputs.quick_test == 'true' && format('QUICK TEST BUILD, only {0} and the JVM examples certified, no corpus. ', needs.resolve-commit.outputs.regression_books) || '' }}ACL2 ${{ needs.resolve-commit.outputs.acl2_branch }}@${{ needs.resolve-commit.outputs.acl2_commit_short }} on SBCL for linux/amd64, all regression books and the Axe JVM examples certified, with STP, Z3, a JDK, and the Java bootstrap classes
+
+      # Copy the build information the image records (/root/acl2-build-info:
+      # certification times, dependency files, the certification runs; see
+      # certify-books-and-clean in the main Dockerfile) out of the image just
+      # built, add a description of the build and of the runner, and keep it
+      # all as an artifact of this run.  (The runner details are why the
+      # repository running this should be private: its artifacts are only as
+      # private as it is.)  A problem here must not stop the image from
+      # being published, hence continue-on-error.
+      - name: Collect build information
+        id: info
+        continue-on-error: true
+        env:
+          ARCH: amd64
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ needs.resolve-commit.outputs.image_name }}:${{ needs.resolve-commit.outputs.acl2_commit_short }}-amd64
+        run: |
+          set -eu
+          dir="${RUNNER_TEMP}/build-info"
+          rm -rf "${dir}" && mkdir -p "${dir}"
+          cid=$(docker create "${IMAGE_ID}")
+          docker cp "${cid}:/root/acl2-build-info/." "${dir}/"
+          docker rm "${cid}" > /dev/null
+          {
+            echo "Image:          ${IMAGE_REF}"
+            echo "Image ID:       ${IMAGE_ID}"
+            echo "Pushed digest:  ${DIGEST:-(not pushed)}"
+            echo "Platform:       linux/${ARCH}"
+            echo "Quick test:     ${{ needs.resolve-commit.outputs.quick_test }}"
+            echo "ACL2:           ${{ needs.resolve-commit.outputs.acl2_commit }} (${{ needs.resolve-commit.outputs.acl2_branch }})"
+            echo "acl2-docker:    ${{ needs.resolve-commit.outputs.docker_commit }} (${{ env.PUBLIC_REPO }}, ref ${{ needs.resolve-commit.outputs.docker_ref }})"
+            echo "Cert jobs:      ${{ inputs.cert_jobs || 'all cores' }}"
+            echo "Workflow run:   ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (attempt ${GITHUB_RUN_ATTEMPT}, ${{ github.event_name }})"
+            echo "Runner:         ${RUNNER_NAME} (${RUNNER_OS}, ${RUNNER_ARCH})"
+            echo "Host:           $(uname -srm)"
+            case "$(uname -s)" in
+              Darwin)
+                echo "Host OS:        $(sw_vers -productName) $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+                echo "Host CPU:       $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) cores"
+                echo "Host memory:    $(( $(sysctl -n hw.memsize) / 1073741824 )) GiB" ;;
+              Linux)
+                echo "Host OS:        $(. /etc/os-release && echo "${PRETTY_NAME}")"
+                echo "Host CPU:       $(lscpu | sed -n 's/^Model name: *//p' | head -1 | grep . || echo unknown), $(nproc) cores"
+                echo "Host memory:    $(awk '/MemTotal/ { printf "%d GiB", $2 / 1048576 }' /proc/meminfo)" ;;
+            esac
+            echo "Docker:         $(docker info --format '{{.ServerVersion}} on {{.OperatingSystem}}, kernel {{.KernelVersion}}, {{.NCPU}} CPUs, {{.MemTotal}} bytes')"
+            echo
+            echo "In the image:"
+            docker run --rm "${IMAGE_ID}" bash -c '
+              . /etc/os-release
+              echo "  OS:           ${PRETTY_NAME}"
+              echo "  ACL2:         $(git -C "${ACL2_ROOT}" log -1 --format="%H %cd")"
+              echo "  SBCL:         $(sbcl --version)"
+              echo "  STP:          $(stp --version | head -1)$(stp --version | grep -q -- -DUSE_CRYPTOMINISAT && echo ", with CryptoMiniSat")"
+              echo "  Z3:           $(z3 --version)"
+              echo "  javac:        $(javac -version 2>&1)"'
+          } > "${dir}/build-info.txt"
+          cat "${dir}/build-info.txt"
+          image_name="${{ needs.resolve-commit.outputs.image_name }}"
+          echo "artifact=${image_name##*/}-build-info-${{ needs.resolve-commit.outputs.acl2_commit_short }}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build information
+        if: ${{ steps.info.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.info.outputs.artifact }}
+          path: ${{ runner.temp }}/build-info
+          if-no-files-found: error
+
+      - name: Report certification failure
+        if: failure()
+        run: |
+          echo "## kestrel-allcerts-java amd64 Build FAILED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The build is strict: no manifest will be pushed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "If the failure was during book certification, the end of the" >> $GITHUB_STEP_SUMMARY
+          echo "build step log lists the books that failed (under" >> $GITHUB_STEP_SUMMARY
+          echo "'CERTIFICATION FAILED'); details for each appear earlier in" >> $GITHUB_STEP_SUMMARY
+          echo "the log.  The regression and the Axe JVM examples are separate" >> $GITHUB_STEP_SUMMARY
+          echo "steps of the Dockerfile; a failure in the examples leaves the" >> $GITHUB_STEP_SUMMARY
+          echo "regression layer in the runner's Docker cache for the next try." >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Job 3: Build arm64 image (self-hosted Apple Silicon runner)
+  # ==========================================================================
+  build-arm64:
+    needs: resolve-commit
+    if: ${{ needs.resolve-commit.outputs.build_needed == 'true' }}
+    runs-on: [self-hosted, macOS, ARM64]
+    # A full regression plus the Java examples; allow for a cold Docker cache.
+    timeout-minutes: 2880
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.PUBLIC_REPO }}
+          ref: ${{ needs.resolve-commit.outputs.docker_commit }}
+
+      # Docker Desktop stores registry logins in the macOS keychain (the
+      # "desktop"/"osxkeychain" credential helper in ~/.docker/config.json).
+      # A runner that is not in an interactive session cannot use the
+      # keychain ("User interaction is not allowed. (-25308)"), so give this
+      # job its own Docker config directory in which the login below lands
+      # in config.json (under RUNNER_TEMP; removed by the login action's
+      # logout at the end of the job) and never touches the keychain.  The
+      # current context and the CLI plugins are linked in so the CLI still
+      # talks to Docker Desktop exactly as before.
+      #
+      # An empty config is NOT enough: on macOS the docker CLI silently picks
+      # the osxkeychain helper whenever a config has no credsStore, no
+      # credHelpers and no auths entry at all (docker/cli, LoadDefaultConfigFile
+      # -> DetectDefaultStore), and Docker Desktop puts that helper on PATH.
+      # A placeholder auths entry for an unusable host makes the CLI use its
+      # plain file store instead; it is never consulted for a real registry.
+      - name: Use a job-local Docker config (no keychain)
+        run: |
+          set -eu
+          cfg="${RUNNER_TEMP}/docker-config"
+          rm -rf "${cfg}" && mkdir -p "${cfg}/cli-plugins"
+          ctx="$(docker context show)"
+          printf '{ "currentContext": "%s", "auths": { "job-local-placeholder.invalid": {} } }\n' "${ctx}" \
+            > "${cfg}/config.json"
+          [ -d "${HOME}/.docker/contexts" ] && ln -s "${HOME}/.docker/contexts" "${cfg}/contexts"
+          for p in "${HOME}"/.docker/cli-plugins/*; do
+            [ -e "${p}" ] && ln -s "${p}" "${cfg}/cli-plugins/"
+          done
+          echo "DOCKER_CONFIG=${cfg}" >> "$GITHUB_ENV"
+          echo "Docker config for this job: ${cfg} (context ${ctx})"
+
+      # 'docker' driver: layers are cached in Docker Desktop's daemon across
+      # builds (SBCL, STP, and the JDK layers rarely change), and step 1's
+      # image is visible to step 2 by name without a push.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check that the login went to the job-local config, not the keychain
+        run: |
+          if grep -q '"ghcr.io"' "${DOCKER_CONFIG}/config.json"; then
+            echo "ghcr.io credentials are in ${DOCKER_CONFIG}/config.json."
+          else
+            echo "::error::The ghcr.io login did not land in ${DOCKER_CONFIG}/config.json;" \
+                 "the docker CLI is still using a credential helper."
+            exit 1
+          fi
+
+      # Step 1 of the two-step build: the base (SBCL + ACL2 + solvers, no
+      # books certified) from the main Dockerfile.  Not pushed; it stays in
+      # the daemon for step 2.
+      - name: Build the cert-base image (main Dockerfile)
+        uses: docker/build-push-action@v7
+        with:
+          provenance: false
+          context: .
+          file: ./Dockerfile
+          target: cert-base
+          platforms: linux/arm64
+          load: true
+          push: false
+          tags: acl2-cert-base:build
+          build-args: |
+            ACL2_COMMIT=${{ needs.resolve-commit.outputs.acl2_commit }}
+            ACL2_BUILD_TYPE=commit
+
+      # Step 2: Java tooling and the (downloaded, checksummed) Java assets,
+      # then the regression and the Axe JVM examples, then the corpus.
+      - name: Build and push arm64 image (arch-suffixed tag)
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          # keep pushes as plain manifests (v6+ defaults provenance on for pushes)
+          provenance: false
+          context: .
+          file: ./Dockerfile.allcerts-with-java
+          target: allcerts-java
+          platforms: linux/arm64
+          push: ${{ needs.resolve-commit.outputs.push == 'true' }}
+          tags: ${{ env.REGISTRY }}/${{ needs.resolve-commit.outputs.image_name }}:${{ needs.resolve-commit.outputs.acl2_commit_short }}-arm64
+          build-args: |
+            BASE_IMAGE=acl2-cert-base:build
+            ACL2_BRANCH=${{ needs.resolve-commit.outputs.acl2_branch }}
+            CERT_JOBS=${{ inputs.cert_jobs }}
+            REGRESSION_BOOKS=${{ needs.resolve-commit.outputs.regression_books }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-commit.outputs.acl2_commit }}
+            org.opencontainers.image.source=https://github.com/acl2/acl2
+            org.opencontainers.image.description=${{ needs.resolve-commit.outputs.quick_test == 'true' && format('QUICK TEST BUILD, only {0} and the JVM examples certified, no corpus. ', needs.resolve-commit.outputs.regression_books) || '' }}ACL2 ${{ needs.resolve-commit.outputs.acl2_branch }}@${{ needs.resolve-commit.outputs.acl2_commit_short }} on SBCL for linux/arm64, all regression books and the Axe JVM examples certified, with STP, Z3, a JDK, and the Java bootstrap classes
+
+      # Copy the build information the image records (/root/acl2-build-info:
+      # certification times, dependency files, the certification runs; see
+      # certify-books-and-clean in the main Dockerfile) out of the image just
+      # built, add a description of the build and of the runner, and keep it
+      # all as an artifact of this run.  (The runner details are why the
+      # repository running this should be private: its artifacts are only as
+      # private as it is.)  A problem here must not stop the image from
+      # being published, hence continue-on-error.
+      - name: Collect build information
+        id: info
+        continue-on-error: true
+        env:
+          ARCH: arm64
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ needs.resolve-commit.outputs.image_name }}:${{ needs.resolve-commit.outputs.acl2_commit_short }}-arm64
+        run: |
+          set -eu
+          dir="${RUNNER_TEMP}/build-info"
+          rm -rf "${dir}" && mkdir -p "${dir}"
+          cid=$(docker create "${IMAGE_ID}")
+          docker cp "${cid}:/root/acl2-build-info/." "${dir}/"
+          docker rm "${cid}" > /dev/null
+          {
+            echo "Image:          ${IMAGE_REF}"
+            echo "Image ID:       ${IMAGE_ID}"
+            echo "Pushed digest:  ${DIGEST:-(not pushed)}"
+            echo "Platform:       linux/${ARCH}"
+            echo "Quick test:     ${{ needs.resolve-commit.outputs.quick_test }}"
+            echo "ACL2:           ${{ needs.resolve-commit.outputs.acl2_commit }} (${{ needs.resolve-commit.outputs.acl2_branch }})"
+            echo "acl2-docker:    ${{ needs.resolve-commit.outputs.docker_commit }} (${{ env.PUBLIC_REPO }}, ref ${{ needs.resolve-commit.outputs.docker_ref }})"
+            echo "Cert jobs:      ${{ inputs.cert_jobs || 'all cores' }}"
+            echo "Workflow run:   ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (attempt ${GITHUB_RUN_ATTEMPT}, ${{ github.event_name }})"
+            echo "Runner:         ${RUNNER_NAME} (${RUNNER_OS}, ${RUNNER_ARCH})"
+            echo "Host:           $(uname -srm)"
+            case "$(uname -s)" in
+              Darwin)
+                echo "Host OS:        $(sw_vers -productName) $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+                echo "Host CPU:       $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) cores"
+                echo "Host memory:    $(( $(sysctl -n hw.memsize) / 1073741824 )) GiB" ;;
+              Linux)
+                echo "Host OS:        $(. /etc/os-release && echo "${PRETTY_NAME}")"
+                echo "Host CPU:       $(lscpu | sed -n 's/^Model name: *//p' | head -1 | grep . || echo unknown), $(nproc) cores"
+                echo "Host memory:    $(awk '/MemTotal/ { printf "%d GiB", $2 / 1048576 }' /proc/meminfo)" ;;
+            esac
+            echo "Docker:         $(docker info --format '{{.ServerVersion}} on {{.OperatingSystem}}, kernel {{.KernelVersion}}, {{.NCPU}} CPUs, {{.MemTotal}} bytes')"
+            echo
+            echo "In the image:"
+            docker run --rm "${IMAGE_ID}" bash -c '
+              . /etc/os-release
+              echo "  OS:           ${PRETTY_NAME}"
+              echo "  ACL2:         $(git -C "${ACL2_ROOT}" log -1 --format="%H %cd")"
+              echo "  SBCL:         $(sbcl --version)"
+              echo "  STP:          $(stp --version | head -1)$(stp --version | grep -q -- -DUSE_CRYPTOMINISAT && echo ", with CryptoMiniSat")"
+              echo "  Z3:           $(z3 --version)"
+              echo "  javac:        $(javac -version 2>&1)"'
+          } > "${dir}/build-info.txt"
+          cat "${dir}/build-info.txt"
+          image_name="${{ needs.resolve-commit.outputs.image_name }}"
+          echo "artifact=${image_name##*/}-build-info-${{ needs.resolve-commit.outputs.acl2_commit_short }}-${ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build information
+        if: ${{ steps.info.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.info.outputs.artifact }}
+          path: ${{ runner.temp }}/build-info
+          if-no-files-found: error
+
+      - name: Report certification failure
+        if: failure()
+        run: |
+          echo "## kestrel-allcerts-java arm64 Build FAILED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The build is strict: no manifest will be pushed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "If the failure was during book certification, the end of the" >> $GITHUB_STEP_SUMMARY
+          echo "build step log lists the books that failed (under" >> $GITHUB_STEP_SUMMARY
+          echo "'CERTIFICATION FAILED'); details for each appear earlier in" >> $GITHUB_STEP_SUMMARY
+          echo "the log.  The regression and the Axe JVM examples are separate" >> $GITHUB_STEP_SUMMARY
+          echo "steps of the Dockerfile; a failure in the examples leaves the" >> $GITHUB_STEP_SUMMARY
+          echo "regression layer in the runner's Docker cache for the next try." >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Job 4: Create multi-platform manifest
+  # ==========================================================================
+  create-manifest:
+    needs: [resolve-commit, build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    if: ${{ needs.resolve-commit.outputs.push == 'true' }}
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+      tags: ${{ steps.manifest.outputs.tags }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-platform manifest
+        id: manifest
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-commit.outputs.image_name }}"
+          BASE_TAG="${{ needs.resolve-commit.outputs.acl2_commit_short }}"
+          TAGS=("${IMAGE}:${BASE_TAG}")
+
+          if [ -n "${{ inputs.additional_tag }}" ]; then
+            TAGS+=("${IMAGE}:${{ inputs.additional_tag }}")
+          # Auto-add "latest" for a default build of the development branch
+          elif [ "${{ needs.resolve-commit.outputs.default_build }}" = "true" ]; then
+            TAGS+=("${IMAGE}:latest")
+            echo "Auto-adding 'latest' tag for default testing-kestrel build"
+          fi
+
+          TAG_ARGS=()
+          for t in "${TAGS[@]}"; do TAG_ARGS+=(-t "$t"); done
+
+          # Create the manifest from the two arch-suffixed platform images.
+          # (The -amd64/-arm64 tags remain in the registry; they are just
+          # the per-platform carriers for this manifest.)
+          docker buildx imagetools create "${TAG_ARGS[@]}" \
+            "${IMAGE}:${BASE_TAG}-amd64" \
+            "${IMAGE}:${BASE_TAG}-arm64"
+
+          MANIFEST_DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${BASE_TAG}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=${MANIFEST_DIGEST}" >> $GITHUB_OUTPUT
+          echo "tags=${TAGS[*]}" >> $GITHUB_OUTPUT
+          echo "Created manifest ${MANIFEST_DIGEST}, tagged: ${TAGS[*]}"
+
+  # ==========================================================================
+  # Job 5: Summary
+  # ==========================================================================
+  summary:
+    needs: [resolve-commit, build-amd64, build-arm64, create-manifest]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print summary
+        run: |
+          if [ "${{ needs.resolve-commit.outputs.build_needed }}" != "true" ]; then
+            echo "## kestrel-allcerts-java: nothing to build" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "testing-kestrel is still at \`${{ needs.resolve-commit.outputs.acl2_commit }}\`, which both platforms of \`latest\` were built from; the build was skipped." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          quick="${{ needs.resolve-commit.outputs.quick_test }}"
+          image_name="${{ needs.resolve-commit.outputs.image_name }}"
+          if [ "${quick}" = "true" ]; then
+            echo "## QUICK TEST Build Summary (${image_name#*/}, Multi-Platform)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Build Summary (${image_name#*/}, Multi-Platform)" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          if [ "${quick}" = "true" ]; then
+            echo "| Quick Test | only \`${{ needs.resolve-commit.outputs.regression_books }}\` and the Axe JVM examples certified; no corpus |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "| ACL2 Commit | \`${{ needs.resolve-commit.outputs.acl2_commit }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ACL2 Branch | \`${{ needs.resolve-commit.outputs.acl2_branch }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| acl2-docker | \`${{ needs.resolve-commit.outputs.docker_commit }}\` (\`${{ needs.resolve-commit.outputs.docker_ref }}\`) |" >> $GITHUB_STEP_SUMMARY
+          echo "| linux/amd64 build | ${{ needs.build-amd64.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| linux/arm64 build | ${{ needs.build-arm64.result }} |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.cert_jobs }}" ]; then
+            echo "| Cert Jobs | \`-j${{ inputs.cert_jobs }}\` (each runner) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Cert Jobs | all cores of each runner |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "| Push to Registry | ${{ needs.resolve-commit.outputs.push }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Information | artifacts \`${image_name#*/}-build-info-${{ needs.resolve-commit.outputs.acl2_commit_short }}-{amd64,arm64}\` of this run (for each build that succeeded) |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.build-amd64.result }}" != "success" ] || \
+             [ "${{ needs.build-arm64.result }}" != "success" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**A build job did not succeed, so no manifest was created; see the build-* jobs for details.**" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          if [ "${{ needs.resolve-commit.outputs.push }}" = "true" ]; then
+            echo "| Tags | \`${{ needs.create-manifest.outputs.tags }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Manifest Digest | \`${{ needs.create-manifest.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## Pull Command" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "# Multi-platform image (Docker picks the architecture)" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/${{ needs.resolve-commit.outputs.image_name }}:${{ needs.resolve-commit.outputs.acl2_commit_short }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [ "${quick}" = "true" ]; then
+              echo "linux/amd64 and linux/arm64.  QUICK TEST image: only" >> $GITHUB_STEP_SUMMARY
+              echo "\`${{ needs.resolve-commit.outputs.regression_books }}\` and the Axe JVM examples are certified," >> $GITHUB_STEP_SUMMARY
+              echo "with STP and Z3, a JDK, and the Java bootstrap classes; no agent corpus." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "linux/amd64 and linux/arm64.  Contains all regression books and the" >> $GITHUB_STEP_SUMMARY
+              echo "Axe JVM examples with their certifications, STP and Z3, a JDK, and" >> $GITHUB_STEP_SUMMARY
+              echo "the Java bootstrap classes (JAVA_BOOTSTRAP_CLASSES_ROOT is set)." >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            # The package is meant to be public, but ghcr.io creates a NEW
+            # package as private on its first push, whatever repository pushed
+            # it.  This job is not logged in, so an anonymous manifest fetch
+            # tells us whether the pull command above would work for users.
+            # (The quick-test package may as well stay private.)
+            image="${{ env.REGISTRY }}/${image_name}:${{ needs.resolve-commit.outputs.acl2_commit_short }}"
+            if docker manifest inspect "${image}" >/dev/null 2>&1; then
+              echo "The package is public: the pull above works without logging in." >> $GITHUB_STEP_SUMMARY
+            elif [ "${quick}" = "true" ]; then
+              echo "The test package is private: \`docker login ghcr.io\` before pulling." >> $GITHUB_STEP_SUMMARY
+            else
+              settings="https://github.com/orgs/${image_name%%/*}/packages/container/${image_name#*/}/settings"
+              echo "**The package does not appear to be publicly readable** (an" >> $GITHUB_STEP_SUMMARY
+              echo "anonymous manifest fetch failed).  A new ghcr.io package is" >> $GITHUB_STEP_SUMMARY
+              echo "created private on its first push: change its visibility to" >> $GITHUB_STEP_SUMMARY
+              echo "public at ${settings} (Danger Zone -> Change visibility)." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** built on self-hosted runners; no SLSA attestation." >> $GITHUB_STEP_SUMMARY
