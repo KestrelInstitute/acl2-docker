@@ -74,7 +74,8 @@ All images except `kestrel-allcerts-java` use the same tagging scheme (in
 their respective packages):
 
 - **Master build (the default)**: tagged `master-abc1234` AND `latest`
-  - Git is set up for easy updates: `git pull origin master`
+  - Git is on the `master` branch with upstream tracking (see INSTALL.md
+    for updating; the clone is shallow, so not `git pull`)
   - The `latest` tag always points to the most recent master build
 - **Specific ref**: tagged `commit-abc1234` only
   - Git is in detached HEAD mode (see INSTALL.md for updating)
@@ -88,8 +89,9 @@ of in-progress builds — which can likewise be ignored.
 
 `kestrel-allcerts-java` is built from the `testing-kestrel` branch and is
 tagged with the 7-character ACL2 commit (`abc1234`), plus `latest` for
-each build of the branch head; git inside the image is set up for
-`git pull origin testing-kestrel`.  Its per-architecture carrier tags are
+each build of the branch head; git inside the image is on the
+`testing-kestrel` branch with upstream tracking (see INSTALL.md for
+updating).  Its per-architecture carrier tags are
 `abc1234-amd64` and `abc1234-arm64`.
 
 ### Builds are Strict
@@ -148,7 +150,7 @@ Build arguments (all have defaults in the Dockerfile):
 | Argument | Meaning |
 |----------|---------|
 | `ACL2_COMMIT` | ACL2 commit, tag, or branch to build (default `master`) |
-| `ACL2_BUILD_TYPE` | `master` (branch set up for `git pull`) or `commit` (detached HEAD) |
+| `ACL2_BUILD_TYPE` | `master` (`master` branch with upstream tracking) or `commit` (detached HEAD) |
 | `CERT_JOBS` | Parallel certification jobs for `kcerts`/`allcerts` (default: all cores) |
 | `SBCL_VERSION`, `SBCL_SHA256` | SBCL release to build; change both together |
 | `STP_VERSION`, `MINISAT_COMMIT` | STP release and its minisat dependency (`cert-base` and up) |

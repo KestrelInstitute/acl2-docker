@@ -176,7 +176,8 @@ Notes:
   [xdoc-corpus release](https://github.com/KestrelInstitute/acl2-docker/releases/tag/xdoc-corpus)
   for use outside this image (kcerts sessions, air-gapped environments).
   See `tools/DESIGN.md` for how it is built.
-- **Updating ACL2 inside these images** (git pull + `make update`) is possible
+- **Updating ACL2 inside these images** (a shallow fetch + `make update`;
+  see "Updating ACL2") is possible
   but rarely useful: previously certified books become stale with respect to
   the new executable.  Prefer pulling a newer image build.
 
@@ -189,8 +190,8 @@ JVM tools need.  It differs from `acl2-allcerts` in four ways:
   arm64 image on Apple Silicon), where `acl2-allcerts` is amd64 only.
 - **ACL2 branch**: built from `testing-kestrel`, Kestrel's development
   branch, which is synced with master roughly daily.  Inside the image the
-  checkout is on that branch, so `git pull origin testing-kestrel` works
-  (see "Updating ACL2" below).  It is rebuilt every night that the branch
+  checkout is on that branch, with upstream tracking (see "Updating ACL2"
+  below for how to update it).  It is rebuilt every night that the branch
   has changed; each build is tagged with the ACL2 commit it was built from
   (see "Image Tags").
 - **Java tooling**: a JDK (`javac`, `java`; OpenJDK 17), for compiling
@@ -264,7 +265,7 @@ pkg-containers.githubusercontent.com
 
 (The first serves the image manifests; the second serves the actual layer
 blobs, so pulls fail partway without it.)  If Claude should also be able to
-`git pull` ACL2 or fetch other GitHub repositories during the session, make
+fetch ACL2 updates or other GitHub repositories during the session, make
 sure `github.com` is allowed too; a blocked host shows up as a 403 from the
 sandbox's proxy, and no container setting can work around that.
 
@@ -403,7 +404,7 @@ ACL2 version banner, the certificate count, and the sanity-check results.
    it with -j 1.  Before starting anything you expect to take more
    than about 15 minutes, tell me the estimate.
 
-7. Do not `git pull` or otherwise modify /root/acl2 unless I ask:
+7. Do not `git pull`, `git fetch`, or otherwise modify /root/acl2 unless I ask:
    updating the books invalidates the certificates of every changed
    book and of everything that depends on it (two weeks of upstream
    changes invalidated about 85% of the 12,000 certificates in
@@ -411,10 +412,14 @@ ACL2 version banner, the certificate count, and the sanity-check results.
    newer image tag (each repository carries `master-<commit>` tags, or
    for kestrel-allcerts-java plain `<commit>` tags; list them as in
    step 2), not a pull inside the container.
-   If I do ask you to update ACL2 in place (`cd /root/acl2 && git pull
-   && make update LISP=$(which sbcl)`, run with the proxy variables
-   passed to docker exec), you do not need to work out which books
-   became stale: `cert.pl -j $(nproc) bookname` first recertifies every
+   If I do ask you to update ACL2 in place, do not use `git pull`:
+   /root/acl2 is a shallow clone, and a pull downloads nearly all of
+   ACL2's history.  Instead run, with the proxy variables passed to
+   docker exec, `cd /root/acl2 && git fetch --depth 1 origin BRANCH &&
+   git checkout -B BRANCH origin/BRANCH && make update LISP=$(which sbcl)`,
+   where BRANCH is `testing-kestrel` for kestrel-allcerts-java and
+   `master` for the other images.  You do not need to work out which
+   books became stale: `cert.pl -j $(nproc) bookname` first recertifies every
    book in bookname's dependency closure whose certificate is out of
    date, and leaves the rest alone.
 
@@ -719,8 +724,8 @@ The four packages built from ACL2 master use the same tagging scheme:
 
 | Tag | Description | Git Status inside image |
 |-----|-------------|-------------------------|
-| `latest` | Most recent master build | On `master` branch, `git pull origin master` works |
-| `master-abc1234` | Built from master at commit abc1234 | On `master` branch, `git pull origin master` works |
+| `latest` | Most recent master build | On `master` branch, see "Updating ACL2" section |
+| `master-abc1234` | Built from master at commit abc1234 | On `master` branch, see "Updating ACL2" section |
 | `commit-abc1234` | Built from specific commit abc1234 | Detached HEAD, see "Updating ACL2" section |
 
 Two packages carry extra tags you can ignore: `acl2-kcerts` has
@@ -734,8 +739,8 @@ tags differently:
 
 | Tag | Description | Git Status inside image |
 |-----|-------------|-------------------------|
-| `latest` | Most recent build of `testing-kestrel` | On `testing-kestrel` branch, `git pull origin testing-kestrel` works |
-| `abc1234` | Built from `testing-kestrel` at ACL2 commit abc1234 | On `testing-kestrel` branch, `git pull origin testing-kestrel` works |
+| `latest` | Most recent build of `testing-kestrel` | On `testing-kestrel` branch, see "Updating ACL2" section |
+| `abc1234` | Built from `testing-kestrel` at ACL2 commit abc1234 | On `testing-kestrel` branch, see "Updating ACL2" section |
 
 It also has per-architecture tags (`abc1234-amd64`, `abc1234-arm64`), the
 carriers of its multi-platform manifest, which you can ignore.
@@ -860,6 +865,20 @@ By default, `docker run --rm` discards changes when you exit. To save your certi
 
 ### Updating ACL2
 
+The ACL2 checkout in every image, `/root/acl2`, is a shallow clone: it has
+the commit the image was built from but none of its history.  To update
+it, fetch only the new tip of the branch with `git fetch --depth 1` and
+switch to it with `git checkout -B`, as shown below for each kind of image.
+This downloads only what changed.
+
+Do not use `git pull`.  Without `--depth 1`, git has to download the full
+history behind every commit that a new merge brings in, because the clone
+has no older history at which to stop.  Both master and `testing-kestrel`
+get merge commits most days, so in practice this is nearly all of ACL2's
+history, more than a gigabyte.  With `--depth 1`, `git pull` fails with
+"refusing to merge unrelated histories", because the clone has none of the
+fetched commit's parents.
+
 #### Master Builds (`master-*` tags)
 
 Images tagged `master-abc1234` are set up with proper Git branch tracking. You can update directly in the docker container.
@@ -870,7 +889,8 @@ First get the updates:
 
 ```bash
 cd /root/acl2
-git pull origin master
+git fetch --depth 1 origin master
+git checkout -B master origin/master
 ```
 
 After updating, rebuild the ACL2 executable if anything going into it has changed:
@@ -895,9 +915,6 @@ git fetch --depth 1 origin master
 git checkout -B master origin/master
 ```
 
-Note, without the `--depth 1` the fetch downloads ACL2's whole history, which is big
-and probably not needed.
-
 After updating, rebuild the ACL2 executable if anything going into it has changed:
 
 ```bash
@@ -909,12 +926,13 @@ You may want to certify some books before committing the new docker image.
 #### The Java Image (`kestrel-allcerts-java`)
 
 This image's checkout is on the `testing-kestrel` branch with upstream
-tracking, so updating works as for master builds, with that branch in
-place of master:
+tracking.  Update it as for master builds, with that branch in place of
+master:
 
 ```bash
 cd /root/acl2
-git pull origin testing-kestrel
+git fetch --depth 1 origin testing-kestrel
+git checkout -B testing-kestrel origin/testing-kestrel
 make update LISP=`which sbcl`
 ```
 
