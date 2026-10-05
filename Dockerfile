@@ -194,6 +194,13 @@ RUN cd books && make ACL2=/root/acl2/saved_acl2 build/Makefile-features
 # stages below certify them (kestrel/top's dependency tree and the full
 # regression suite, respectively).
 
+# Gather SBCL and ACL2 under /stage so the runtime stage takes both in a
+# single COPY (see there).  The sbcl-acl2 wrapper is only for the build above.
+RUN mkdir -p /stage/usr /stage/root && \
+    cp -a /usr/local /stage/usr/local && \
+    rm /stage/usr/local/bin/sbcl-acl2 && \
+    mv /root/acl2 /stage/root/acl2
+
 # =============================================================================
 # Stage 3: Common runtime environment (shared by all final targets)
 # =============================================================================
@@ -239,11 +246,17 @@ CMD ["acl2"]
 # =============================================================================
 FROM runtime-base AS runtime
 
-# Copy SBCL runtime
-COPY --from=sbcl-builder /usr/local /usr/local
+# Copy SBCL and ACL2 (/usr/local and /root/acl2) in one COPY.  SBCL runs
+# saved_acl2.core only under the very SBCL build that saved it, and BuildKit
+# reuses a cached layer when the instruction and its inputs' definitions
+# match, without comparing file contents.  With separate COPYs from
+# sbcl-builder and acl2-builder, a partly pruned build cache can rebuild SBCL
+# for ACL2 while reusing an older SBCL here, and every book then fails with
+# "core was built for runtime ... but this is ...".
+COPY --from=acl2-builder /stage/ /
 
-# Copy ACL2
-COPY --from=acl2-builder /root/acl2 /root/acl2
+# Fail here, not during certification, if SBCL cannot run the ACL2 core.
+RUN echo '(good-bye)' | "${ACL2}" > /dev/null
 
 # =============================================================================
 # Stage 5: Build the STP solver from source (used via 'cert-base')
