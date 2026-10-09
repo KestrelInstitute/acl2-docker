@@ -701,10 +701,11 @@ persistent session, as follows.
    ```
 
    The most useful tools: `evaluate` (anything you would type at the
-   ACL2 prompt, including `:pe`, `:pbt`, `:doc`), `undo`,
-   `certify_book` (cert.pl-backed), `admit` (try an event without
-   committing it), and `end_session`.  Books already certified in the
-   image include instantly inside a session.
+   ACL2 prompt, including `:pe`, `:pbt`, `:doc`, and `:u` to undo),
+   `certify_book` (cert.pl-backed), `xdoc_search` and `xdoc_show`
+   (the manual, from the image's agent corpus), and `end_session`.
+   Books already certified in the image include instantly inside a
+   session.
 ````
 
 ---
