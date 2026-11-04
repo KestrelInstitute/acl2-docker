@@ -404,15 +404,18 @@ ACL2 version banner, the certificate count, and the sanity-check results.
    it with -j 1.  Before starting anything you expect to take more
    than about 15 minutes, tell me the estimate.
 
-7. Do not `git pull`, `git fetch`, or otherwise modify /root/acl2 unless I ask:
+7. Do not run `git pull` or `git fetch` in `/root/acl2`:
    updating the books invalidates the certificates of every changed
    book and of everything that depends on it (two weeks of upstream
    changes invalidated about 85% of the 12,000 certificates in
-   acl2-allcerts).  If a newer ACL2 is needed, the right route is a
+   acl2-allcerts), which can mean hours of recertification.
+   An update is usually unnecessary for new development, or for work on
+   code that hasn't changed upstream since the image was built.
+   If a newer ACL2 is needed, the best route is a
    newer image tag (each repository carries `master-<commit>` tags, or
    for kestrel-allcerts-java plain `<commit>` tags; list them as in
    step 2), not a pull inside the container.
-   If I do ask you to update ACL2 in place, do not use `git pull`:
+   If you do need to update ACL2 in place, do not use `git pull`:
    /root/acl2 is a shallow clone, and a pull downloads nearly all of
    ACL2's history.  Instead run, with the proxy variables passed to
    docker exec, `cd /root/acl2 && git fetch --depth 1 origin BRANCH &&
