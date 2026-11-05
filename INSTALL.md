@@ -659,24 +659,19 @@ the dependency-free client shipped in the acl2-mcp repository.
 **Paste this to the Claude session after the image setup above:**
 
 ````text
-Please also set up the acl2-mcp server so ACL2 interactions keep a
-persistent session, as follows.
+Please also set up the acl2-mcp server in the `acl2` container, so ACL2
+interactions keep a persistent session, as follows.
 
-1. Run the image as a persistent container and install the server in it
-   (host networking so pip can reach PyPI; the sandbox intercepts TLS
-   with its own CA, which the container must be told to trust):
+1. Clone acl2-mcp into the working directory, which the container sees
+   as /work, and install it in a virtual environment in the container.
+   pip needs the network, so pass the current proxy setting again, and
+   point pip at the proxy's CA bundle, mounted at /etc/ccr-ca.crt:
 
    ```bash
    git clone https://github.com/bendyarm/acl2-mcp
-   docker run -d --name acl2dev --network=host \
-     -v "$PWD/acl2-mcp":/opt/acl2-mcp -v "$PWD":/work \
-     ghcr.io/kestrelinstitute/acl2-allcerts:latest sleep infinity
-   for f in /usr/local/share/ca-certificates/*.crt; do
-     docker cp "$f" acl2dev:/usr/local/share/ca-certificates/
-   done
-   docker exec acl2dev bash -c \
-     'update-ca-certificates && python3 -m venv /root/.venvs/mcp \
-      && /root/.venvs/mcp/bin/pip install --quiet /opt/acl2-mcp'
+   docker exec -e HTTPS_PROXY="$HTTPS_PROXY" -e PIP_CERT=/etc/ccr-ca.crt acl2 \
+     bash -c 'python3 -m venv /root/.venvs/mcp \
+              && /root/.venvs/mcp/bin/pip install --quiet /work/acl2-mcp'
    ```
 
 2. Verify with the client's self-test (it starts a session, evaluates
@@ -684,10 +679,15 @@ persistent session, as follows.
 
    ```bash
    python3 acl2-mcp/for-agents/mcp_stdio_client.py \
-     docker exec -i acl2dev /root/.venvs/mcp/bin/acl2-mcp
+     docker exec -i acl2 /root/.venvs/mcp/bin/acl2-mcp
    ```
 
-3. Then drive ACL2 from your own Python using that client.  IMPORTANT:
+3. Read acl2-mcp/for-agents/AGENTS.md before using the tools: it says how
+   to work in a session (timeouts, interrupts, undoing, checkpoints, and
+   documentation lookup).  Its tool names start with `mcp__acl2__`; with
+   the client, call the tools by their plain names, as below.
+
+4. Then drive ACL2 from your own Python using that client.  IMPORTANT:
    sessions live inside the server process, so create ONE `MCP` instance
    and keep it alive for the whole interaction (e.g. run a long-lived
    driver script, or structure work as one script per proof task):
@@ -695,7 +695,7 @@ persistent session, as follows.
    ```python
    import sys; sys.path.insert(0, "acl2-mcp/for-agents")
    from mcp_stdio_client import MCP
-   m = MCP(["docker", "exec", "-i", "acl2dev", "/root/.venvs/mcp/bin/acl2-mcp"])
+   m = MCP(["docker", "exec", "-i", "acl2", "/root/.venvs/mcp/bin/acl2-mcp"])
    m.initialize()
    sid = m.start_session()
    print(m.call("evaluate", {"code": '(include-book "kestrel/axe/top" :dir :system)',
@@ -705,10 +705,18 @@ persistent session, as follows.
 
    The most useful tools: `evaluate` (anything you would type at the
    ACL2 prompt, including `:pe`, `:pbt`, `:doc`, and `:u` to undo),
-   `certify_book` (cert.pl-backed), `xdoc_search` and `xdoc_show`
-   (the manual, from the image's agent corpus), and `end_session`.
-   Books already certified in the image include instantly inside a
-   session.
+   `interrupt_session` (like Ctrl-C, for a proof or computation that
+   runs too long), `certify_book` (cert.pl-backed), `xdoc_search` and
+   `xdoc_show` (the manual, from the image's agent corpus), and
+   `end_session`.  `evaluate` waits at most 300 seconds (less with a
+   `timeout`).  A timeout does not stop ACL2: it keeps working, the
+   next `evaluate` waits for it and shows its output first, and
+   `interrupt_session` stops it.  Books already certified in the image
+   include instantly inside a session.
+
+   The session log, whose path the `start_session` reply gives, is in
+   the container, so where AGENTS.md says to `tail` it, run
+   `docker exec acl2 tail -50 PATH` instead.
 ````
 
 ---
