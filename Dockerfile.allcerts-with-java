@@ -152,14 +152,17 @@ LABEL org.opencontainers.image.description="ACL2 theorem prover built on SBCL fr
 ARG CERT_JOBS=
 ARG REGRESSION_BOOKS=
 
-# The standard regression, exactly as the 'allcerts' target does it (strict;
-# make -k so every failing book is reported; artifacts cleaned up in the
-# same layer).  This is the long step.  (A quick test build certifies just
-# REGRESSION_BOOKS instead; see the header.)
+# Every book, as 'make regression-everything' ('make all' in books/) does
+# it: the standard regression plus the books it leaves out as slow (all of
+# projects/x86isa and projects/filesystems, and a few others), and the files
+# Emacs's acl2-doc reads, made from the manual (strict; make -k so every
+# failing book is reported; artifacts cleaned up in the same layer).  This is
+# the long step.  (A quick test build certifies just REGRESSION_BOOKS
+# instead; see the header.)
 RUN J="${CERT_JOBS:-$(nproc)}" && \
     if [ -z "${REGRESSION_BOOKS}" ]; then \
-      echo "Certifying the full regression suite with -j${J}..." && \
-      certify-books-and-clean make -j"${J}" regression ACL2="${ACL2}"; \
+      echo "Certifying every book (make regression-everything) with -j${J}..." && \
+      certify-books-and-clean make -j"${J}" regression-everything ACL2="${ACL2}"; \
     else \
       echo "QUICK TEST BUILD: certifying only ${REGRESSION_BOOKS} with -j${J}..." && \
       certify-books-and-clean cert.pl -j "${J}" --keep-going \
