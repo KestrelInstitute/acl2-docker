@@ -149,6 +149,16 @@ FROM java-base AS allcerts-java
 LABEL org.opencontainers.image.title="ACL2 (all regression books certified) with Java, for the Axe JVM tools"
 LABEL org.opencontainers.image.description="ACL2 theorem prover built on SBCL from the testing-kestrel branch, with all regression books and the Axe JVM examples certified, the STP and Z3 solvers, a JDK, and the Java bootstrap classes"
 
+# Build order only, to limit memory use: the two largest kestrel/axe/x86
+# books (about 7.5 and 6 GB) become ready at almost the same time, and this
+# makes one wait for the other so that they do not run together.  Neither
+# certificate depends on the other ('|' makes it an order-only
+# prerequisite).  Paths are relative to books/.  GNU make reads this file
+# through MAKEFILES, which is set for the regression below only.
+RUN printf '%s\n' \
+      'kestrel/axe/x86/unroller-code-only.cert: | kestrel/axe/x86/tester-code-only.cert' \
+      > /usr/local/share/acl2-build-order.mk
+
 ARG CERT_JOBS=
 ARG REGRESSION_BOOKS=
 
@@ -162,7 +172,8 @@ ARG REGRESSION_BOOKS=
 RUN J="${CERT_JOBS:-$(nproc)}" && \
     if [ -z "${REGRESSION_BOOKS}" ]; then \
       echo "Certifying every book (make regression-everything) with -j${J}..." && \
-      certify-books-and-clean make -j"${J}" regression-everything ACL2="${ACL2}"; \
+      MAKEFILES=/usr/local/share/acl2-build-order.mk \
+        certify-books-and-clean make -j"${J}" regression-everything ACL2="${ACL2}"; \
     else \
       echo "QUICK TEST BUILD: certifying only ${REGRESSION_BOOKS} with -j${J}..." && \
       certify-books-and-clean cert.pl -j "${J}" --keep-going \
