@@ -336,9 +336,10 @@ This is also why the nightly is amd64 only.
   certification starts.
 - **Z3 with Python bindings** (the pinned `z3-solver` package in a
   virtualenv at `/root/.venvs/smtlink`, whose `bin` is appended to `PATH`),
-  used by Smtlink. The Smtlink configuration file `/root/smtlink-config`
-  points at the venv's Python by absolute path and is written before
-  certification, so the certified Smtlink books have it baked in.
+  used by Smtlink and Smtlink 3. Their configuration files point at the
+  venv by absolute path: `/root/smtlink-config` (Smtlink) at its Python and
+  `/root/smtlink3-config` (Smtlink 3) at its `z3`. Both are written before
+  certification, so the certified Smtlink books have them baked in.
 - Certification artifacts that are no longer needed are removed:
   `.cert.out` (and other `.out` logs), `.cert.time` (and other `.time`
   files), and `workxxx` files.  Before they go, each book's certification

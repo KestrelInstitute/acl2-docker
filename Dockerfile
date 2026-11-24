@@ -400,19 +400,27 @@ RUN python3 -m venv /root/.venvs/smtlink && \
     /root/.venvs/smtlink/bin/pip install --no-cache-dir "z3-solver==${Z3_SOLVER_VERSION}"
 ENV PATH="${PATH}:/root/.venvs/smtlink/bin"
 
-# Smtlink reads its configuration from $SMT_HOME/smtlink-config, then
-# $HOME/smtlink-config, then the smtlink book directory (see
-# books/projects/smtlink/config.lisp).  We write $HOME/smtlink-config with an
-# absolute path BEFORE certification, so this value is baked into the
-# certified smtlink books and does not depend on PATH at proof time.
-RUN printf 'smt-cmd=/root/.venvs/smtlink/bin/python\n' > /root/smtlink-config
+# Each Smtlink reads its configuration file from $SMT_HOME, then $HOME, then
+# its own book directory:
+#   - Smtlink (books/projects/smtlink/config.lisp) reads smtlink-config,
+#     whose smt-cmd is the Python that has the Z3 bindings;
+#   - Smtlink 3 (books/workshops/2026/chen-greenstreet-seltzer/config.lisp)
+#     reads smtlink3-config, whose smt-cmd is the z3 executable.
+# We write both files in $HOME with absolute paths BEFORE certification, so
+# these values are baked into the certified books and do not depend on PATH
+# at proof time.
+RUN printf 'smt-cmd=/root/.venvs/smtlink/bin/python\n' > /root/smtlink-config && \
+    printf 'smt-cmd=/root/.venvs/smtlink/bin/z3\n' > /root/smtlink3-config
 
 # Sanity-check both solvers exactly the way the books use them, BEFORE
 # spending hours on the regression:
-# - z3/python check mirrors books/projects/smtlink/README.md
+# - 'z3' on PATH is what books/build/features.sh looks for
+# - the smt-cmd of each Smtlink configuration file must run; the Python one
+#   must import the Z3 bindings (as in books/projects/smtlink/README.md)
 # - teststp.bash is Axe's own end-to-end STP test; it must print "Valid."
 RUN z3 --version && \
-    /root/.venvs/smtlink/bin/python -c "import z3; print('z3 python bindings:', z3.get_version_string())" && \
+    "$(sed -n 's/^smt-cmd=//p' /root/smtlink3-config)" --version && \
+    "$(sed -n 's/^smt-cmd=//p' /root/smtlink-config)" -c "import z3; print('z3 python bindings:', z3.get_version_string())" && \
     out="$(bash books/kestrel/axe/teststp.bash)" && \
     echo "$out" && \
     echo "$out" | grep -q 'Valid\.' && \

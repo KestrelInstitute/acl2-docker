@@ -130,7 +130,8 @@ Notes:
   - **Z3 with Python bindings** (for Smtlink) lives in a virtualenv at
     `/root/.venvs/smtlink` (its `bin`, containing `z3` and `python`, is on
     `PATH`).  The Smtlink configuration `/root/smtlink-config` points at that
-    Python by absolute path and was in place when the Smtlink books were
+    Python, and the Smtlink 3 configuration `/root/smtlink3-config` at that
+    `z3`, by absolute path; both were in place when the Smtlink books were
     certified.
 - **Which books are certified**:
   - kcerts and kcerts-nightly: `kestrel/top` and its dependency tree
@@ -480,7 +481,8 @@ requires ptrace.  Use this tested daemonless workflow instead:
    `/root/acl2-work-image` as the setup directory.  Before changing anything,
    stop if `/root/acl2` or `/root/foo` already exists; do not overwrite either.
    For any image except the lean `ghcr.io/kestrelinstitute/acl2` image, also
-   stop if `/root/.venvs/smtlink` or `/root/smtlink-config` exists.
+   stop if `/root/.venvs/smtlink`, `/root/smtlink-config` or
+   `/root/smtlink3-config` exists.
 
 2. Download Skopeo and Umoci from Ubuntu without installing them system-wide.
    Apt's normal `_apt` privilege drop and dpkg locking do not work in this
@@ -535,9 +537,11 @@ requires ptrace.  Use this tested daemonless workflow instead:
      mkdir -p /root/.venvs
      mv "$image_root/root/.venvs/smtlink" /root/.venvs/smtlink
    fi
-   if [ -f "$image_root/root/smtlink-config" ]; then
-     mv "$image_root/root/smtlink-config" /root/smtlink-config
-   fi
+   for f in smtlink-config smtlink3-config; do
+     if [ -f "$image_root/root/$f" ]; then
+       mv "$image_root/root/$f" "/root/$f"
+     fi
+   done
    mv "$image_root/root/foo" /root/foo
    ```
 
